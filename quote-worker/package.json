@@ -1,0 +1,14 @@
+{
+  "name": "vontobel-quote-worker",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node worker.mjs",
+    "postinstall": "playwright install --with-deps chromium"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "playwright": "^1.47.0"
+  }
+}
