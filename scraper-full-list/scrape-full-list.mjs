@@ -28,6 +28,7 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 const BASE_URL = "https://www.ngm.se/market/etp";
+const ISSUER_QUERY_PARAM = "issuers=vontobel"; // confirmed working: /market/etp?issuers=vontobel&page=1
 const ISSUER_FILTER = /vontobel|^von$/i; // matches "Vontobel" or the short code "VON"
 const ISIN_RE = /\b([A-Z]{2}[A-Z0-9]{9}\d)\b/; // standard ISIN pattern
 const MAX_PAGES = 400; // hard safety cap so a bug can't loop forever
@@ -49,7 +50,7 @@ function parseSvTimestamp(s) {
 }
 
 async function scrapePage(page, pageNum) {
-  const url = `${BASE_URL}?page=${pageNum}`;
+  const url = `${BASE_URL}?${ISSUER_QUERY_PARAM}&page=${pageNum}`;
   await page.goto(url, { waitUntil: "networkidle", timeout: NAV_TIMEOUT_MS });
 
   // Wait for *some* table content to hydrate. Adjust this selector if the
