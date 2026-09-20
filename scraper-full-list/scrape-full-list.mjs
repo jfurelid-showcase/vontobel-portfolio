@@ -148,6 +148,17 @@ async function main() {
   try {
     for (let p = 1; p <= MAX_PAGES; p++) {
       const { headers, rows, isLastPage } = await scrapePage(page, p);
+
+      if (p === 1) {
+        // One-time diagnostic dump so we can see exactly what the live DOM
+        // looks like, instead of guessing again. Safe to delete once the
+        // mapping below is confirmed correct.
+        console.log("=== DEBUG: headers detected on page 1 ===");
+        console.log(JSON.stringify(headers));
+        console.log("=== DEBUG: first 2 raw rows on page 1 ===");
+        console.log(JSON.stringify(rows.slice(0, 2), null, 2));
+      }
+
       const mapped = rows
         .map((r) => mapRowToCertificate(headers, r, p))
         .filter(Boolean);
