@@ -29,12 +29,25 @@ async function sniff(page, label, url) {
       const contentType = response.headers()["content-type"] || "";
       if (!looksInteresting(response.url(), contentType)) return;
 
+      const isInstrumentList = response.url().includes("/instrument/list");
+
       let bodySnippet = "";
       let containsIsin = false;
+      let extra = "";
       try {
         const text = await response.text();
         containsIsin = ISIN_RE.test(text);
-        bodySnippet = text.slice(0, 1500);
+        bodySnippet = text.slice(0, isInstrumentList ? 20000 : 1500);
+        if (isInstrumentList) {
+          try {
+            const parsed = JSON.parse(text);
+            const topKeys = Array.isArray(parsed) ? "(array)" : Object.keys(parsed);
+            const arr = Array.isArray(parsed) ? parsed : parsed.data;
+            extra = `\nTOP-LEVEL KEYS: ${JSON.stringify(topKeys)}\nITEM COUNT IN THIS RESPONSE: ${arr?.length}\nREQUEST METHOD: ${req.method()}\nREQUEST URL: ${req.url()}\nREQUEST POST DATA: ${req.postData()}\nALL ISSUERS SEEN IN THIS BATCH: ${JSON.stringify([...new Set((arr || []).map((x) => x.issuer))])}`;
+          } catch (e) {
+            extra = `\n(could not parse as JSON: ${e.message})`;
+          }
+        }
       } catch {
         bodySnippet = "(could not read body)";
       }
@@ -45,6 +58,7 @@ async function sniff(page, label, url) {
         contentType,
         containsIsin,
         bodySnippet,
+        extra,
       });
     } catch {
       // ignore individual response errors
@@ -62,6 +76,7 @@ async function sniff(page, label, url) {
   for (const s of seen) {
     console.log(`\n--- ${s.url}`);
     console.log(`status=${s.status} content-type=${s.contentType} containsIsin=${s.containsIsin}`);
+    if (s.extra) console.log(s.extra);
     console.log(s.bodySnippet);
   }
   return seen;
