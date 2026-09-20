@@ -68,12 +68,20 @@ async function scrapePage(page, pageNum) {
   const rows = await page.$$eval(
     "table tbody tr, [role='row']:not(:first-child)",
     (trs) =>
-      trs.map((tr) => ({
-        cells: Array.from(tr.querySelectorAll("td, [role='cell'], [role='gridcell']")).map(
-          (td) => td.textContent.trim()
-        ),
-        html: tr.outerHTML,
-      }))
+      trs.map((tr) => {
+        const titledEls = Array.from(tr.querySelectorAll("[title]")).map((el) =>
+          el.getAttribute("title")
+        );
+        const href = tr.querySelector("a[href*='/market/instrument/']")?.getAttribute("href") || null;
+        return {
+          cells: Array.from(tr.querySelectorAll("td, [role='cell'], [role='gridcell']")).map(
+            (td) => td.textContent.trim()
+          ),
+          html: tr.outerHTML,
+          href,
+          titledEls,
+        };
+      })
   );
 
   const nextDisabled = await page
@@ -87,19 +95,18 @@ async function scrapePage(page, pageNum) {
 }
 
 function mapRowToCertificate(headers, row, pageNum) {
-  const { cells, html } = row;
+  const { cells, html, href, titledEls } = row;
 
   const byHeader = {};
   headers.forEach((h, i) => {
     if (cells[i] !== undefined) byHeader[h] = cells[i];
   });
 
-  // ISIN isn't in a visible column on this page — look for it in the row's
-  // raw HTML instead (most likely inside a link href to the instrument's
-  // detail page, e.g. /market/etp/instrument/DE000XYZ12345).
+  const insrefMatch = href && href.match(/\/market\/instrument\/(\d+)/);
+  const insref = insrefMatch ? Number(insrefMatch[1]) : null;
+
   const isinMatch = html.match(ISIN_RE);
   const isin = isinMatch ? isinMatch[1] : null;
-  if (!isin) return null;
 
   const get = (...keys) => {
     for (const k of keys) {
@@ -113,15 +120,15 @@ function mapRowToCertificate(headers, row, pageNum) {
   if (!ISSUER_FILTER.test(issuer)) return null; // keep only Vontobel
 
   return {
-    isin,
-    insref: null, // not present in this view; left null unless we find another source
-    name: get("namn", "name") || cells[1] || "",
+    isin, // may be null for now — see README, detail-page fetch comes next
+    insref,
+    name: titledEls?.[0] || get("namn", "name") || cells[1] || "",
     issuer: "Vontobel",
-    underlying: get("underliggande", "underlying"), // likely null here — see note in README
+    underlying: titledEls?.[1] || null,
     buy_price: parseSvNumber(get("köp")),
     sell_price: parseSvNumber(get("sälj")),
     last_price: parseSvNumber(get("senast", "last")),
-    direction: get("riktning", "direction"),
+    direction: titledEls?.[2] || get("riktning", "direction"),
     leverage: parseSvNumber(get("hävstång", "leverage")),
     daily_change_pct: parseSvNumber(get("%")),
     turnover: parseSvNumber(get("omsättning", "turnover")),
@@ -151,8 +158,34 @@ async function main() {
         console.log(JSON.stringify(headers));
         console.log("=== DEBUG: first row's visible cells on page 1 ===");
         console.log(JSON.stringify(rows[0]?.cells));
-        console.log("=== DEBUG: first row's raw HTML on page 1 (truncated to 3000 chars) ===");
-        console.log((rows[0]?.html || "").slice(0, 3000));
+        console.log("=== DEBUG: first row's titled elements (name/underlying/direction) ===");
+        console.log(JSON.stringify(rows[0]?.titledEls));
+        console.log("=== DEBUG: first row's href ===");
+        console.log(rows[0]?.href);
+
+        if (rows[0]?.href) {
+          const detailUrl = new URL(rows[0].href, BASE_URL).toString();
+          console.log(`=== DEBUG: fetching detail page ${detailUrl} ===`);
+          const detailPage = await browser.newPage({ locale: "sv-SE" });
+          try {
+            await detailPage.goto(detailUrl, { waitUntil: "networkidle", timeout: NAV_TIMEOUT_MS });
+            const bodyText = await detailPage.evaluate(() => document.body.innerText);
+            const bodyHtmlSnippet = await detailPage.evaluate(() => document.body.innerHTML.slice(0, 6000));
+            const isinsFound = [...bodyText.matchAll(new RegExp(ISIN_RE, "g"))].map((m) => m[1]);
+            console.log("=== DEBUG: ISINs found in detail page visible text ===");
+            console.log(JSON.stringify(isinsFound));
+            console.log("=== DEBUG: detail page visible text (truncated to 2000 chars) ===");
+            console.log(bodyText.slice(0, 2000));
+            if (isinsFound.length === 0) {
+              console.log("=== DEBUG: no ISIN in visible text — first 6000 chars of body HTML ===");
+              console.log(bodyHtmlSnippet);
+            }
+          } catch (e) {
+            console.log("Detail page fetch failed:", e.message);
+          } finally {
+            await detailPage.close();
+          }
+        }
       }
 
       const mapped = rows
@@ -163,8 +196,12 @@ async function main() {
       if (isLastPage || rows.length === 0) break;
     }
 
-    const byIsin = new Map(all.map((c) => [c.isin, c]));
+    const byIsin = new Map(all.filter((c) => c.isin).map((c) => [c.isin, c]));
     const finalRows = Array.from(byIsin.values());
+    const skippedNoIsin = all.length - finalRows.length;
+    if (skippedNoIsin > 0) {
+      console.log(`Skipped ${skippedNoIsin} Vontobel rows with no ISIN yet (detail-page lookup not implemented yet).`);
+    }
 
     if (finalRows.length === 0) {
       throw new Error(
