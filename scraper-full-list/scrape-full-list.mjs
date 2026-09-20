@@ -52,8 +52,6 @@ async function scrapePage(page, pageNum) {
   const url = `${BASE_URL}?page=${pageNum}`;
   await page.goto(url, { waitUntil: "networkidle", timeout: NAV_TIMEOUT_MS });
 
-  // Wait for *some* table content to hydrate. Adjust this selector if the
-  // real DOM uses something else (e.g. a specific data-testid).
   try {
     await page.waitForSelector("table, [role='table'], [role='row']", {
       timeout: NAV_TIMEOUT_MS,
@@ -62,8 +60,6 @@ async function scrapePage(page, pageNum) {
     return { rows: [], isLastPage: true };
   }
 
-  // Pull header text once (first row / thead) so we can map columns by name
-  // instead of by fixed index — resilient to column reordering.
   const headers = await page.$$eval(
     "table thead th, [role='row']:first-child [role='columnheader'], [role='row']:first-child > *",
     (cells) => cells.map((c) => c.textContent.trim().toLowerCase())
@@ -97,7 +93,7 @@ async function scrapePage(page, pageNum) {
       "[aria-label='Next'], [aria-label='Nästa'], button:has-text('Nästa')",
       (el) => el.disabled || el.getAttribute("aria-disabled") === "true"
     )
-    .catch(() => true); // if we can't find a "next" control, assume this is the last page
+    .catch(() => true);
 
   return { headers, rows, isLastPage: nextDisabled };
 }
