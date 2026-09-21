@@ -90,10 +90,14 @@ function Dashboard() {
   async function loadAll() {
     const [{ data: pos }, { data: nav }] = await Promise.all([
       supabase.from("portfolio_positions").select("*").order("created_at", { ascending: false }),
-        supabase.from("nav_history").select("ts, nav").order("ts", { ascending: false }).limit(2000),
+              supabase
+          .from("nav_history")
+          .select("ts, nav")
+          .gte("ts", new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString())
+          .order("ts", { ascending: true }),
     ]);
     setPositions((pos as Position[]) || []);
-    setNavHistory(((nav as NavPoint[]) || []).slice().reverse());
+        setNavHistory((nav as NavPoint[]) || []);
   }
 
   useEffect(() => {
