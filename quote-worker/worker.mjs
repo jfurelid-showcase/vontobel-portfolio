@@ -77,7 +77,7 @@ async function fetchLivePrice(insref) {
 async function tick() {
   const { data: openPositions, error } = await supabase
     .from("portfolio_positions")
-    .select("id, isin, entry_price, stake_sek")
+    .select("id, isin, entry_price, stake_sek, current_price")
     .eq("status", "open");
   if (error) throw error;
 
@@ -115,25 +115,20 @@ async function tick() {
     })
   );
 
+  // NAV is now pinned to a fixed capital base (portfolio_settings.cash_sek,
+  // e.g. 100000 SEK = NAV 100) instead of a weighted-return index. This way
+  // NAV moves in direct proportion to real SEK profit/loss against that
+  // base:  NAV = 100 + 100 * (total P/L in SEK) / base_capital.
   const { data: settings } = await supabase.from("portfolio_settings").select("cash_sek").single();
-  const cashSek = settings?.cash_sek || 0;
+  const baseCapital = settings?.cash_sek || 100000;
 
-  // NAV as an index starting at 100, not a raw SEK total — this way it
-  // reflects the portfolio's weighted-average % return regardless of how
-  // many positions exist or how much stake each one has, and deleting a
-  // stray/duplicate test position doesn't look like a crash.
-  //   totalStake = the "cost basis" — every SEK ever put into a position
-  //   totalValue = what that stake is worth now (open: at current price;
-  //                closed: at its exit price), plus untouched cash
-  // index = 100 * totalValue / totalStake
-  let totalStake = cashSek;
-  let totalValue = cashSek;
+  let totalPl = 0;
 
   for (const pos of openPositions) {
     const price = priceByIsin.get(pos.isin) ?? pos.current_price; // fall back to last known price if this tick's fetch failed
-    totalStake += pos.stake_sek;
-    if (price != null) totalValue += pos.stake_sek * (price / pos.entry_price);
-    else totalValue += pos.stake_sek; // no price at all yet — treat as unchanged rather than dropping it from the index
+    if (price != null) {
+      totalPl += pos.stake_sek * ((price - pos.entry_price) / pos.entry_price);
+    }
 
     const freshPrice = priceByIsin.get(pos.isin);
     if (freshPrice == null) continue; // nothing new to write for this position this tick
@@ -151,14 +146,15 @@ async function tick() {
     .select("stake_sek, entry_price, exit_price")
     .eq("status", "closed");
   for (const pos of closedPositions || []) {
-    totalStake += pos.stake_sek;
-    totalValue += pos.exit_price != null ? pos.stake_sek * (pos.exit_price / pos.entry_price) : pos.stake_sek;
+    if (pos.exit_price != null) {
+      totalPl += pos.stake_sek * ((pos.exit_price - pos.entry_price) / pos.entry_price);
+    }
   }
 
-  const nav = totalStake > 0 ? (100 * totalValue) / totalStake : 100;
+  const nav = 100 + (100 * totalPl) / baseCapital;
 
   await supabase.from("nav_history").insert({ ts: now, nav });
-  console.log(`Tick ${now}: ${priceByIsin.size}/${isins.length} prices updated, NAV=${nav.toFixed(2)}`);
+  console.log(`Tick ${now}: ${priceByIsin.size}/${isins.length} prices updated, P/L=${totalPl.toFixed(0)} SEK, NAV=${nav.toFixed(2)}`);
 }
 
 async function loop() {
