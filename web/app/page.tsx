@@ -188,7 +188,9 @@ function PositionListView({ items }: { items: Position[] }) {
         <thead className="bg-neutral-800/60 text-xs uppercase tracking-wide text-neutral-500">
           <tr>
             <th className="px-3 py-2">Name</th>
+            <th className="px-3 py-2">Underlying</th>
             <th className="px-3 py-2">Dir</th>
+            <th className="px-3 py-2">Qty</th>
             <th className="px-3 py-2">Entry</th>
             <th className="px-3 py-2">{items[0]?.status === "closed" ? "Exit" : "Now"}</th>
             <th className="px-3 py-2">Change</th>
@@ -220,9 +222,11 @@ function PositionListView({ items }: { items: Position[] }) {
                 <td className="px-3 py-2 font-medium">
                   {p.name} <span className="text-xs text-neutral-500">({p.isin})</span>
                 </td>
+                <td className="px-3 py-2 text-neutral-300">{p.underlying ?? "–"}</td>
                 <td className={`px-3 py-2 ${isLong ? "text-emerald-400" : isShort ? "text-red-400" : ""}`}>
                   {p.direction ?? "–"}
                 </td>
+                <td className="px-3 py-2">{p.quantity ?? "–"}</td>
                 <td className="px-3 py-2">{p.entry_price}</td>
                 <td className="px-3 py-2">{price ?? "–"}</td>
                 <td className={`px-3 py-2 font-medium ${isUp ? "text-emerald-400" : "text-red-400"}`}>
