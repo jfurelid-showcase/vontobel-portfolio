@@ -7,7 +7,26 @@ export async function GET() {
     .select("*")
     .order("created_at", { ascending: false });
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json(data);
+
+  // Attach each certificate's own previous-close price, so daily change can
+  // be computed live against the position's own current_price (refreshed
+  // every ~10s by the quote worker) instead of a once-daily stat.
+  const isins = [...new Set((data ?? []).map((p) => p.isin))];
+  let prevCloseByIsin = new Map<string, number | null>();
+  if (isins.length > 0) {
+    const { data: certs } = await supabaseAdmin
+      .from("certificates_full")
+      .select("isin, prev_close_price")
+      .in("isin", isins);
+    prevCloseByIsin = new Map((certs ?? []).map((c) => [c.isin, c.prev_close_price]));
+  }
+
+  const enriched = (data ?? []).map((p) => ({
+    ...p,
+    prev_close_price: prevCloseByIsin.get(p.isin) ?? null,
+  }));
+
+  return NextResponse.json(enriched);
 }
 
 // Body: { isin, entry_price, stop_loss, target_price, quantity, note, podcast_episode }
@@ -40,6 +59,7 @@ export async function POST(req: NextRequest) {
       name: cert.name,
       direction: cert.direction,
       leverage: cert.leverage,
+      underlying: cert.underlying,
       instrument_type: cert.instrument_type,
       entry_price,
       entry_time: new Date().toISOString(),
