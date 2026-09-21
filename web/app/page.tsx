@@ -233,8 +233,8 @@ function PositionListView({ items }: { items: Position[] }) {
                   {p.direction ?? "–"}
                 </td>
                 <td className="px-3 py-2">{p.quantity ?? "–"}</td>
-                <td className="px-3 py-2">{p.entry_price}</td>
-                <td className="px-3 py-2">{price ?? "–"}</td>
+                <td className="px-3 py-2">{p.entry_price.toFixed(2)}</td>
+                <td className="px-3 py-2">{price != null ? price.toFixed(2) : "–"}</td>
                 <td className={`px-3 py-2 font-medium ${isUp ? "text-emerald-400" : "text-red-400"}`}>
                   {isUp ? "+" : ""}
                   {change.toFixed(2)}%
