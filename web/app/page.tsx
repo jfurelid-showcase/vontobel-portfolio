@@ -228,11 +228,12 @@ function Dashboard() {
 function PositionListView({ items }: { items: Position[] }) {
   return (
     <div className="overflow-x-auto rounded-xl border border-neutral-800 bg-neutral-900">
-      <table className="w-full min-w-[720px] text-left text-sm">
+      <table className="w-full min-w-[960px] text-left text-sm">
         <thead className="bg-neutral-800/60 text-xs uppercase tracking-wide text-neutral-500">
           <tr>
             <th className="px-3 py-2">Name</th>
             <th className="px-3 py-2">Underlying</th>
+            <th className="px-3 py-2">Daily %</th>
             <th className="px-3 py-2">Dir</th>
             <th className="px-3 py-2">Qty</th>
             <th className="px-3 py-2">Entry</th>
@@ -257,6 +258,11 @@ function PositionListView({ items }: { items: Position[] }) {
             // Prefer quantity for an exact SEK figure; fall back to the
             // stake-based % return if quantity isn't set (older positions).
             const pl = p.quantity != null ? (price - p.entry_price) * p.quantity : p.stake_sek * (change / 100);
+            const value = p.quantity != null ? price * p.quantity : null;
+            const dailyChange =
+              p.prev_close_price != null && price != null
+                ? ((price - p.prev_close_price) / p.prev_close_price) * 100
+                : null;
             return (
               <tr
                 key={p.id}
@@ -268,12 +274,21 @@ function PositionListView({ items }: { items: Position[] }) {
                   {p.name} <span className="text-xs text-neutral-500">({p.isin})</span>
                 </td>
                 <td className="px-3 py-2 text-neutral-300">{p.underlying ?? "–"}</td>
+                <td
+                  className={`px-3 py-2 ${
+                    dailyChange == null ? "" : dailyChange >= 0 ? "text-emerald-400" : "text-red-400"
+                  }`}
+                >
+                  {dailyChange != null ? `${dailyChange >= 0 ? "+" : ""}${dailyChange.toFixed(2)}%` : "–"}
+                </td>
                 <td className={`px-3 py-2 ${isLong ? "text-emerald-400" : isShort ? "text-red-400" : ""}`}>
                   {p.direction ?? "–"}
                 </td>
+                <td className="px-3 py-2">{p.quantity ?? "–"}</td>
+                <td className="px-3 py-2">{p.entry_price.toFixed(2)}</td>
                 <td className="px-3 py-2">{price != null ? price.toFixed(2) : "–"}</td>
                 <td className="px-3 py-2">
-                  {p.quantity != null ? (price * p.quantity).toLocaleString("sv-SE", { maximumFractionDigits: 0 }) : "–"}
+                  {value != null ? value.toLocaleString("sv-SE", { maximumFractionDigits: 0 }) : "–"}
                 </td>
                 <td className={`px-3 py-2 font-medium ${isUp ? "text-emerald-400" : "text-red-400"}`}>
                   {isUp ? "+" : ""}
