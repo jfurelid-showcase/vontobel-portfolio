@@ -129,8 +129,12 @@ function Dashboard() {
   const RECENT_CLOSED_LIMIT = 10;
   const closed = closedAll.slice(0, RECENT_CLOSED_LIMIT);
 
-  return (
+   return (
     <>
+      <div className="mb-4">
+        <TraderBadge />
+      </div>
+
       <div className="mb-6 flex items-center justify-between">
         <section className="grid flex-1 grid-cols-2 gap-4 sm:grid-cols-4">
           <NavStat label="NAV" value={latestNav.toFixed(2)} />
@@ -214,6 +218,7 @@ function PositionListView({ items }: { items: Position[] }) {
             <th className="px-3 py-2">Qty</th>
             <th className="px-3 py-2">Entry</th>
             <th className="px-3 py-2">{items[0]?.status === "closed" ? "Exit" : "Now"}</th>
+            <th className="px-3 py-2">Value (SEK)</th>
             <th className="px-3 py-2">Change</th>
             <th className="px-3 py-2">P/L (SEK)</th>
             <th className="px-3 py-2">Stop loss</th>
@@ -247,9 +252,10 @@ function PositionListView({ items }: { items: Position[] }) {
                 <td className={`px-3 py-2 ${isLong ? "text-emerald-400" : isShort ? "text-red-400" : ""}`}>
                   {p.direction ?? "–"}
                 </td>
-                <td className="px-3 py-2">{p.quantity ?? "–"}</td>
-                <td className="px-3 py-2">{p.entry_price.toFixed(2)}</td>
                 <td className="px-3 py-2">{price != null ? price.toFixed(2) : "–"}</td>
+                <td className="px-3 py-2">
+                  {p.quantity != null ? (price * p.quantity).toLocaleString("sv-SE", { maximumFractionDigits: 0 }) : "–"}
+                </td>
                 <td className={`px-3 py-2 font-medium ${isUp ? "text-emerald-400" : "text-red-400"}`}>
                   {isUp ? "+" : ""}
                   {change.toFixed(2)}%
