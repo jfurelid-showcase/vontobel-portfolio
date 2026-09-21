@@ -9,6 +9,7 @@ type Position = {
   underlying: string | null;
   direction: string;
   leverage: number | null;
+  instrument_type: string | null;
   quantity: number | null;
   entry_price: number;
   entry_time: string;
@@ -26,12 +27,20 @@ function pct(from: number, to: number) {
   return ((to - from) / from) * 100;
 }
 
+function fmt2(n: number | null | undefined) {
+  return n == null ? "–" : n.toFixed(2);
+}
+
 export default function PositionCard({ p }: { p: Position }) {
   const price = p.status === "closed" ? p.exit_price! : p.current_price ?? p.entry_price;
   const change = pct(p.entry_price, price);
   const isUp = change >= 0;
   const toTarget = p.target_price ? pct(price, p.target_price) : null;
   const toStop = p.stop_loss ? pct(price, p.stop_loss) : null;
+  // Turbo warrants don't have a fixed leverage (NGM reports null for them —
+  // it changes continuously with distance to the barrier), so fall back to
+  // showing the instrument type instead of a made-up number.
+  const leverageOrType = p.leverage ? `${p.leverage}x` : p.instrument_type ?? "";
 
   return (
     <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
@@ -39,7 +48,7 @@ export default function PositionCard({ p }: { p: Position }) {
         <div>
           <div className="font-semibold text-neutral-100">{p.name}</div>
           <div className="text-xs text-neutral-500">
-            {p.underlying} · {p.direction} {p.leverage ? `${p.leverage}x` : ""}
+            {p.underlying} · {p.direction} {leverageOrType}
             {p.quantity ? ` · ${p.quantity} contracts` : ""}
           </div>
         </div>
@@ -81,7 +90,7 @@ function Stat({ label, value, sub }: { label: string; value: number | null; sub?
     <div>
       <div className="text-neutral-500">{label}</div>
       <div className="font-medium text-neutral-100">
-        {value ?? "–"} {sub && <span className="ml-1 text-xs text-neutral-500">({sub})</span>}
+        {fmt2(value)} {sub && <span className="ml-1 text-xs text-neutral-500">({sub})</span>}
       </div>
     </div>
   );

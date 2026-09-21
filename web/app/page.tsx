@@ -19,6 +19,7 @@ type Cert = {
   underlying: string | null;
   direction: string | null;
   leverage: number | null;
+  instrument_type: string | null;
   last_price: number | null;
   buy_price: number | null;
   sell_price: number | null;
@@ -591,10 +592,12 @@ function selectCert(c: Cert) {
                       <td className={`px-3 py-2 font-medium ${isLong ? "text-emerald-400" : isShort ? "text-red-400" : ""}`}>
                         {c.direction ?? "–"}
                       </td>
-                      <td className="px-3 py-2">{c.leverage ? `${c.leverage}x` : "–"}</td>
-                      <td className="px-3 py-2">{c.buy_price ?? "–"}</td>
-                      <td className="px-3 py-2">{c.sell_price ?? "–"}</td>
-                      <td className="px-3 py-2">{c.last_price ?? "–"}</td>
+                                            <td className="px-3 py-2">
+                        {c.leverage ? `${c.leverage}x` : c.instrument_type ?? "–"}
+                      </td>
+                      <td className="px-3 py-2">{c.buy_price != null ? c.buy_price.toFixed(2) : "–"}</td>
+                      <td className="px-3 py-2">{c.sell_price != null ? c.sell_price.toFixed(2) : "–"}</td>
+                      <td className="px-3 py-2">{c.last_price != null ? c.last_price.toFixed(2) : "–"}</td>
                       <td className="px-3 py-2">
                         {c.daily_change_pct != null ? (
                           <span className={c.daily_change_pct >= 0 ? "text-emerald-400" : "text-red-400"}>

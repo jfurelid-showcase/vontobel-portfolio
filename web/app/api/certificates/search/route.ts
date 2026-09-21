@@ -9,7 +9,7 @@ export async function GET(req: NextRequest) {
   let query = supabaseAdmin
     .from("certificates_full")
     .select(
-      "isin, name, underlying, direction, leverage, last_price, buy_price, sell_price, daily_change_pct",
+            "isin, name, underlying, direction, leverage, instrument_type, last_price, buy_price, sell_price, daily_change_pct",
       { count: "exact" }
     )
     .or(`isin.ilike.%${q}%,name.ilike.%${q}%,underlying.ilike.%${q}%`);

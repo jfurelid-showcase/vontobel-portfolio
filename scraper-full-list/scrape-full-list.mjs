@@ -51,6 +51,7 @@ function mapItemToCertificate(item) {
     last_price: item.lastprice ?? null,
     direction: item.funddirection ?? null,
     leverage: item.fundleverage ?? null,
+    instrument_type: item.type ?? null,
     daily_change_pct: item.dailyPerformance ?? null,
     turnover: item.turnover ?? null,
     ngm_updated_at: null, // API doesn't expose a per-instrument "last updated" timestamp

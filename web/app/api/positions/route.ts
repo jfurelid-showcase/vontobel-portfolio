@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
 
   const { data: cert, error: certErr } = await supabaseAdmin
     .from("certificates_full")
-    .select("name, direction, leverage, underlying, last_price")
+    .select("name, direction, leverage, underlying, last_price, instrument_type")
     .eq("isin", isin)
     .single();
 
@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
       name: cert.name,
       direction: cert.direction,
       leverage: cert.leverage,
-      underlying: cert.underlying,
+      instrument_type: cert.instrument_type,
       entry_price,
       entry_time: new Date().toISOString(),
       quantity,
