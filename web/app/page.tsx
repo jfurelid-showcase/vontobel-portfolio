@@ -135,9 +135,27 @@ function Dashboard() {
       <div className="mb-6 flex items-center justify-between">
         <section className="grid flex-1 grid-cols-2 gap-4 sm:grid-cols-4">
           <NavStat label="NAV" value={latestNav.toFixed(2)} />
-          <NavStat label="Today" value={fmtPct(dailyPct)} isPct pctValue={dailyPct} />
-          <NavStat label="This month" value={fmtPct(monthlyPct)} isPct pctValue={monthlyPct} />
-          <NavStat label="YTD" value={fmtPct(ytdPct)} isPct pctValue={ytdPct} />
+          <NavStat
+            label="Today"
+            value={fmtPct(dailyPct)}
+            isPct
+            pctValue={dailyPct}
+            sub={sekDelta(dailyPct, baseCapital)}
+          />
+          <NavStat
+            label="This month"
+            value={fmtPct(monthlyPct)}
+            isPct
+            pctValue={monthlyPct}
+            sub={sekDelta(monthlyPct, baseCapital)}
+          />
+          <NavStat
+            label="YTD"
+            value={fmtPct(ytdPct)}
+            isPct
+            pctValue={ytdPct}
+            sub={sekDelta(ytdPct, baseCapital)}
+          />
                   <NavStat label="Startkapital" value={baseCapital != null ? `${baseCapital.toLocaleString("sv-SE")} SEK` : "–"} />
         <NavStat label="Startdatum" value={startDate ? new Date(startDate).toLocaleDateString("sv-SE") : "–"} />
         </section>
@@ -274,7 +292,11 @@ function PositionListView({ items }: { items: Position[] }) {
     </div>
   );
 }
-
+function sekDelta(pct: number | null, baseCapital: number | null): string | undefined {
+  if (pct == null || baseCapital == null) return undefined;
+  const sek = (pct / 100) * baseCapital;
+  return `${sek >= 0 ? "+" : ""}${sek.toLocaleString("sv-SE", { maximumFractionDigits: 0 })} SEK`;
+}
 function fmtPct(v: number | null) {
   if (v == null) return "–";
   return `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
@@ -285,20 +307,20 @@ function NavStat({
   value,
   isPct,
   pctValue,
+  sub,
 }: {
   label: string;
   value: string;
   isPct?: boolean;
   pctValue?: number | null;
+  sub?: string;
 }) {
   const color = isPct ? (pctValue == null ? "text-neutral-100" : pctValue >= 0 ? "text-emerald-400" : "text-red-400") : "text-neutral-100";
   return (
     <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-4">
       <div className="text-xs text-neutral-500">{label}</div>
       <div className={`mt-1 text-xl font-semibold ${color}`}>{value}</div>
-    </div>
-  );
-}
+      {sub && <div className={`mt-0.5 text-xs ${color}`}>{sub}</div>}
 
 // ---------------------------------------------------------------------------
 // Admin tab
@@ -621,7 +643,7 @@ function selectCert(c: Cert) {
                         {c.daily_change_pct != null ? (
                           <span className={c.daily_change_pct >= 0 ? "text-emerald-400" : "text-red-400"}>
                             {c.daily_change_pct >= 0 ? "+" : ""}
-                            {c.daily_change_pct}%
+                            {c.daily_change_pct.toFixed(2)}%
                           </span>
                         ) : (
                           "–"
