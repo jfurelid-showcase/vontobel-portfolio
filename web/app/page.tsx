@@ -75,6 +75,15 @@ export default function Home() {
 function Dashboard() {
   const [positions, setPositions] = useState<Position[]>([]);
   const [navHistory, setNavHistory] = useState<NavPoint[]>([]);
+    const [baseCapital, setBaseCapital] = useState<number | null>(null);
+  const [startDate, setStartDate] = useState<string | null>(null);
+
+  useEffect(() => {
+    supabase.from("portfolio_settings").select("cash_sek").single()
+      .then(({ data }) => setBaseCapital(data?.cash_sek ?? null));
+    supabase.from("nav_history").select("ts").order("ts", { ascending: true }).limit(1)
+      .then(({ data }) => setStartDate(data?.[0]?.ts ?? null));
+  }, []);
 
   async function loadAll() {
     const [{ data: pos }, { data: nav }] = await Promise.all([
@@ -124,6 +133,8 @@ function Dashboard() {
           <NavStat label="Today" value={fmtPct(dailyPct)} isPct pctValue={dailyPct} />
           <NavStat label="This month" value={fmtPct(monthlyPct)} isPct pctValue={monthlyPct} />
           <NavStat label="YTD" value={fmtPct(ytdPct)} isPct pctValue={ytdPct} />
+                  <NavStat label="Startkapital" value={baseCapital != null ? `${baseCapital.toLocaleString("sv-SE")} SEK` : "–"} />
+        <NavStat label="Startdatum" value={startDate ? new Date(startDate).toLocaleDateString("sv-SE") : "–"} />
         </section>
       </div>
 
