@@ -134,7 +134,11 @@ function Dashboard() {
 
       <div className="mb-6 flex items-center justify-between">
         <section className="grid flex-1 grid-cols-2 gap-4 sm:grid-cols-4">
-          <NavStat label="NAV" value={latestNav.toFixed(2)} />
+          <NavStat
+            label="NAV"
+            value={latestNav.toFixed(2)}
+            sub={baseCapital != null ? `${(baseCapital * (latestNav / 100)).toLocaleString("sv-SE", { maximumFractionDigits: 0 })} SEK` : undefined}
+          />
           <NavStat
             label="Today"
             value={fmtPct(dailyPct)}
