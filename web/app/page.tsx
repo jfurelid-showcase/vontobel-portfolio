@@ -120,10 +120,6 @@ function Dashboard() {
     () => (navHistory.length > 0 ? pctChangeSince(navHistory, latestNav, new Date(navHistory[0].ts)) : null),
     [navHistory, latestNav]
   );
-    const inceptionPct = useMemo(
-    () => (navHistory.length > 0 ? pctChangeSince(navHistory, latestNav, new Date(navHistory[0].ts)) : null),
-    [navHistory, latestNav]
-  );
 
   const [view, setView] = useState<"cards" | "list">("cards");
 
