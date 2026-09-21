@@ -321,6 +321,9 @@ function NavStat({
       <div className="text-xs text-neutral-500">{label}</div>
       <div className={`mt-1 text-xl font-semibold ${color}`}>{value}</div>
       {sub && <div className={`mt-0.5 text-xs ${color}`}>{sub}</div>}
+    </div>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Admin tab
