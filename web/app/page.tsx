@@ -1,13 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { pctChangeSince, startOfDayStockholm, startOfMonth, startOfYear } from "@/lib/nav";
 import PositionCard from "@/components/PositionCard";
-import StickyNote from "@/components/StickyNote";
+import TradeNote from "@/components/TradeNote";
 
 type Position = Parameters<typeof PositionCard>[0]["p"] & {
   stake_sek: number;
+  quantity: number | null;
 };
 type NavPoint = { ts: string; nav: number };
 type Cert = {
@@ -169,12 +170,13 @@ function Admin() {
   const [results, setResults] = useState<Cert[]>([]);
   const [selected, setSelected] = useState<Cert | null>(null);
   const [totalCount, setTotalCount] = useState(0);
+  const [fullListCount, setFullListCount] = useState<number | null>(null);
   const [positions, setPositions] = useState<Position[]>([]);
   const [form, setForm] = useState({
     entry_price: "",
     stop_loss: "",
     target_price: "",
-    stake_sek: "10000",
+    quantity: "100",
     note: "",
     podcast_episode: "",
   });
@@ -182,9 +184,19 @@ function Admin() {
 
   useEffect(() => {
     loadPositions();
+    supabase
+      .from("certificates_full")
+      .select("*", { count: "exact", head: true })
+      .then(({ count }) => setFullListCount(count ?? null));
   }, []);
 
+  const suppressNextSearch = useRef(false);
+
   useEffect(() => {
+    if (suppressNextSearch.current) {
+      suppressNextSearch.current = false;
+      return;
+    }
     const t = setTimeout(async () => {
       if (query.trim().length < 2) {
         setResults([]);
@@ -216,6 +228,7 @@ function Admin() {
       null;
     setForm((f) => ({ ...f, entry_price: fallbackPrice != null ? String(fallbackPrice) : "" }));
     setResults([]);
+    suppressNextSearch.current = true; // selecting shouldn't immediately re-search and reopen the list
     setQuery(c.name);
   }
 
@@ -230,7 +243,7 @@ function Admin() {
         entry_price: parseFloat(form.entry_price),
         stop_loss: form.stop_loss ? parseFloat(form.stop_loss) : null,
         target_price: form.target_price ? parseFloat(form.target_price) : null,
-        stake_sek: parseFloat(form.stake_sek) || 10000,
+        quantity: parseFloat(form.quantity) || 0,
         note: form.note || null,
         podcast_episode: form.podcast_episode || null,
       }),
@@ -239,7 +252,7 @@ function Admin() {
     if (res.ok) {
       setSelected(null);
       setQuery("");
-      setForm({ entry_price: "", stop_loss: "", target_price: "", stake_sek: "10000", note: "", podcast_episode: "" });
+      setForm({ entry_price: "", stop_loss: "", target_price: "", quantity: "100", note: "", podcast_episode: "" });
       loadPositions();
     } else {
       alert((await res.json()).error || "Failed to add position");
@@ -255,7 +268,12 @@ function Admin() {
   return (
     <>
       <section className="mb-10 rounded-2xl border border-neutral-800 bg-neutral-900 p-6">
-        <h2 className="mb-3 text-lg font-medium">Add a position</h2>
+        <div className="mb-3 flex items-baseline justify-between">
+          <h2 className="text-lg font-medium">Add a position</h2>
+          <span className="text-xs text-neutral-500">
+            {fullListCount != null ? `Searchable: ${fullListCount.toLocaleString("sv-SE")} contracts` : ""}
+          </span>
+        </div>
 
         <div className="mb-3 flex gap-1.5">
           {(["", "Long", "Short"] as const).map((d) => (
@@ -273,7 +291,7 @@ function Admin() {
           ))}
         </div>
 
-        <div className="relative mb-4">
+        <div className="mb-4">
           <input
             value={query}
             onChange={(e) => {
@@ -284,33 +302,42 @@ function Admin() {
             className="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2 outline-none focus:border-neutral-500"
           />
           {results.length > 0 && (
-            <ul className="absolute z-10 mt-1 max-h-96 w-full overflow-y-auto rounded-lg border border-neutral-700 bg-neutral-800 shadow-xl">
-              <li className="sticky top-0 border-b border-neutral-700 bg-neutral-800 px-3 py-1.5 text-xs text-neutral-500">
+            <div className="mt-2 max-h-[28rem] overflow-y-auto rounded-lg border border-neutral-700 bg-neutral-800">
+              <div className="sticky top-0 border-b border-neutral-700 bg-neutral-800 px-3 py-1.5 text-xs text-neutral-500">
                 Showing {results.length} of {totalCount} contract{totalCount === 1 ? "" : "s"}
                 {directionFilter ? ` (${directionFilter} only)` : ""}
                 {totalCount > results.length ? " — sorted by turnover, refine your search to narrow further" : ""}
-              </li>
+              </div>
               {results.map((c) => (
-                <li
+                <label
                   key={c.isin}
-                  onClick={() => selectCert(c)}
-                  className="cursor-pointer border-b border-neutral-800 px-3 py-2 last:border-0 hover:bg-neutral-700"
+                  className={`flex cursor-pointer items-start gap-3 border-b border-neutral-800 px-3 py-2.5 last:border-0 hover:bg-neutral-700/60 ${
+                    selected?.isin === c.isin ? "bg-neutral-700/80" : ""
+                  }`}
                 >
-                  <div className="font-medium">{c.name}</div>
-                  <div className="text-xs text-neutral-400">
-                    <span className="text-neutral-300">{c.underlying}</span> · {c.isin} · {c.direction}{" "}
-                    {c.leverage ? `${c.leverage}x` : ""} · last {c.last_price ?? "–"}
-                    {c.daily_change_pct != null && (
-                      <span className={c.daily_change_pct >= 0 ? "text-emerald-400" : "text-red-400"}>
-                        {" "}
-                        ({c.daily_change_pct >= 0 ? "+" : ""}
-                        {c.daily_change_pct}%)
-                      </span>
-                    )}
+                  <input
+                    type="checkbox"
+                    checked={selected?.isin === c.isin}
+                    onChange={() => (selected?.isin === c.isin ? setSelected(null) : selectCert(c))}
+                    className="mt-1 h-4 w-4 shrink-0 accent-neutral-100"
+                  />
+                  <div className="min-w-0">
+                    <div className="font-medium">{c.name}</div>
+                    <div className="text-xs text-neutral-400">
+                      <span className="text-neutral-300">{c.underlying}</span> · {c.isin} · {c.direction}{" "}
+                      {c.leverage ? `${c.leverage}x` : ""} · last {c.last_price ?? "–"}
+                      {c.daily_change_pct != null && (
+                        <span className={c.daily_change_pct >= 0 ? "text-emerald-400" : "text-red-400"}>
+                          {" "}
+                          ({c.daily_change_pct >= 0 ? "+" : ""}
+                          {c.daily_change_pct}%)
+                        </span>
+                      )}
+                    </div>
                   </div>
-                </li>
+                </label>
               ))}
-            </ul>
+            </div>
           )}
         </div>
 
@@ -323,12 +350,20 @@ function Admin() {
                 className="input"
               />
             </Field>
-            <Field label="Stake (SEK)">
+            <Field label="Contract quantity">
               <input
-                value={form.stake_sek}
-                onChange={(e) => setForm({ ...form, stake_sek: e.target.value })}
+                value={form.quantity}
+                onChange={(e) => setForm({ ...form, quantity: e.target.value })}
                 className="input"
               />
+              {form.entry_price && form.quantity && (
+                <p className="mt-1 text-xs text-neutral-500">
+                  ≈ {(parseFloat(form.quantity) * parseFloat(form.entry_price)).toLocaleString("sv-SE", {
+                    maximumFractionDigits: 0,
+                  })}{" "}
+                  SEK at entry
+                </p>
+              )}
             </Field>
             <Field label="Stop loss">
               <input
@@ -385,10 +420,10 @@ function Admin() {
                     </span>
                   </div>
                   <div className="text-sm text-neutral-400">
-                    Entry {p.entry_price} → Now {p.current_price ?? "–"} · SL {p.stop_loss ?? "–"} · Target{" "}
-                    {p.target_price ?? "–"}
+                    {p.quantity ? `${p.quantity} contracts · ` : ""}Entry {p.entry_price} → Now {p.current_price ?? "–"} · SL{" "}
+                    {p.stop_loss ?? "–"} · Target {p.target_price ?? "–"}
                   </div>
-                  <StickyNote note={p.note} podcastEpisode={p.podcast_episode} />
+                  <TradeNote note={p.note} podcastEpisode={p.podcast_episode} />
                 </div>
                 {p.status === "open" && (
                   <button

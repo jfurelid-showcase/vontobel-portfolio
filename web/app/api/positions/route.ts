@@ -10,15 +10,17 @@ export async function GET() {
   return NextResponse.json(data);
 }
 
-// Body: { isin, entry_price, stop_loss, target_price, stake_sek, note, podcast_episode }
+// Body: { isin, entry_price, stop_loss, target_price, quantity, note, podcast_episode }
 // Everything else (name, direction, leverage, underlying) is copied over
-// from certificates_full so the admin doesn't retype it.
+// from certificates_full so the admin doesn't retype it. stake_sek (used by
+// the NAV worker's weighted-return calculation) is derived automatically
+// as quantity * entry_price, so the worker needs no changes.
 export async function POST(req: NextRequest) {
   const body = await req.json();
-  const { isin, entry_price, stop_loss, target_price, stake_sek, note, podcast_episode } = body;
+  const { isin, entry_price, stop_loss, target_price, quantity, note, podcast_episode } = body;
 
-  if (!isin || !entry_price) {
-    return NextResponse.json({ error: "isin and entry_price are required" }, { status: 400 });
+  if (!isin || !entry_price || !quantity) {
+    return NextResponse.json({ error: "isin, entry_price and quantity are required" }, { status: 400 });
   }
 
   const { data: cert, error: certErr } = await supabaseAdmin
@@ -41,7 +43,8 @@ export async function POST(req: NextRequest) {
       underlying: cert.underlying,
       entry_price,
       entry_time: new Date().toISOString(),
-      stake_sek: stake_sek || 10000,
+      quantity,
+      stake_sek: quantity * entry_price,
       stop_loss: stop_loss ?? null,
       target_price: target_price ?? null,
       current_price: cert.last_price ?? entry_price,

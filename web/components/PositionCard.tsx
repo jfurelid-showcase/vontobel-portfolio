@@ -1,6 +1,6 @@
 "use client";
 
-import StickyNote from "./StickyNote";
+import TradeNote from "./TradeNote";
 
 type Position = {
   id: string;
@@ -9,6 +9,7 @@ type Position = {
   underlying: string | null;
   direction: string;
   leverage: number | null;
+  quantity: number | null;
   entry_price: number;
   entry_time: string;
   current_price: number | null;
@@ -39,6 +40,7 @@ export default function PositionCard({ p }: { p: Position }) {
           <div className="font-semibold text-neutral-100">{p.name}</div>
           <div className="text-xs text-neutral-500">
             {p.underlying} · {p.direction} {p.leverage ? `${p.leverage}x` : ""}
+            {p.quantity ? ` · ${p.quantity} contracts` : ""}
           </div>
         </div>
         <span
@@ -69,7 +71,7 @@ export default function PositionCard({ p }: { p: Position }) {
         )}
       </div>
 
-      <StickyNote note={p.note} podcastEpisode={p.podcast_episode} />
+      <TradeNote note={p.note} podcastEpisode={p.podcast_episode} />
     </div>
   );
 }
