@@ -78,10 +78,10 @@ function Dashboard() {
   async function loadAll() {
     const [{ data: pos }, { data: nav }] = await Promise.all([
       supabase.from("portfolio_positions").select("*").order("created_at", { ascending: false }),
-      supabase.from("nav_history").select("ts, nav").order("ts", { ascending: true }).limit(20000),
+        supabase.from("nav_history").select("ts, nav").order("ts", { ascending: false }).limit(2000),
     ]);
     setPositions((pos as Position[]) || []);
-    setNavHistory((nav as NavPoint[]) || []);
+    setNavHistory(((nav as NavPoint[]) || []).slice().reverse());
   }
 
   useEffect(() => {
