@@ -172,6 +172,8 @@ function Admin() {
   const [totalCount, setTotalCount] = useState(0);
   const [fullListCount, setFullListCount] = useState<number | null>(null);
   const [positions, setPositions] = useState<Position[]>([]);
+  const [sortKey, setSortKey] = useState<keyof Cert>("last_price");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [form, setForm] = useState({
     entry_price: "",
     stop_loss: "",
@@ -216,6 +218,34 @@ function Admin() {
   async function loadPositions() {
     const res = await fetch("/api/positions");
     setPositions(await res.json());
+  }
+
+  const sortedResults = useMemo(() => {
+    const arr = [...results];
+    arr.sort((a, b) => {
+      const av = a[sortKey];
+      const bv = b[sortKey];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1; // nulls always sort last, regardless of direction
+      if (bv == null) return -1;
+      let cmp: number;
+      if (typeof av === "number" && typeof bv === "number") {
+        cmp = av - bv;
+      } else {
+        cmp = String(av).localeCompare(String(bv));
+      }
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+    return arr;
+  }, [results, sortKey, sortDir]);
+
+  function toggleSort(key: keyof Cert) {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir("desc");
+    }
   }
 
   function selectCert(c: Cert) {
@@ -267,9 +297,9 @@ function Admin() {
 
   return (
     <>
-      <section className="mb-10 rounded-2xl border border-neutral-800 bg-neutral-900 p-6">
+      <section className="mb-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-6">
         <div className="mb-3 flex items-baseline justify-between">
-          <h2 className="text-lg font-medium">Add a position</h2>
+          <h2 className="text-lg font-medium">Search contracts</h2>
           <span className="text-xs text-neutral-500">
             {fullListCount != null ? `Searchable: ${fullListCount.toLocaleString("sv-SE")} contracts` : ""}
           </span>
@@ -291,58 +321,117 @@ function Admin() {
           ))}
         </div>
 
-        <div className="mb-4">
-          <input
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              setSelected(null);
-            }}
-            placeholder="Search ISIN, name, or underlying (e.g. Tesla)…"
-            className="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2 outline-none focus:border-neutral-500"
-          />
-          {results.length > 0 && (
-            <div className="mt-2 max-h-[28rem] overflow-y-auto rounded-lg border border-neutral-700 bg-neutral-800">
-              <div className="sticky top-0 border-b border-neutral-700 bg-neutral-800 px-3 py-1.5 text-xs text-neutral-500">
-                Showing {results.length} of {totalCount} contract{totalCount === 1 ? "" : "s"}
-                {directionFilter ? ` (${directionFilter} only)` : ""}
-                {totalCount > results.length ? " — sorted by turnover, refine your search to narrow further" : ""}
-              </div>
-              {results.map((c) => (
-                <label
-                  key={c.isin}
-                  className={`flex cursor-pointer items-start gap-3 border-b border-neutral-800 px-3 py-2.5 last:border-0 hover:bg-neutral-700/60 ${
-                    selected?.isin === c.isin ? "bg-neutral-700/80" : ""
-                  }`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={selected?.isin === c.isin}
-                    onChange={() => (selected?.isin === c.isin ? setSelected(null) : selectCert(c))}
-                    className="mt-1 h-4 w-4 shrink-0 accent-neutral-100"
-                  />
-                  <div className="min-w-0">
-                    <div className="font-medium">{c.name}</div>
-                    <div className="text-xs text-neutral-400">
-                      <span className="text-neutral-300">{c.underlying}</span> · {c.isin} · {c.direction}{" "}
-                      {c.leverage ? `${c.leverage}x` : ""} · last {c.last_price ?? "–"}
-                      {c.daily_change_pct != null && (
-                        <span className={c.daily_change_pct >= 0 ? "text-emerald-400" : "text-red-400"}>
-                          {" "}
-                          ({c.daily_change_pct >= 0 ? "+" : ""}
-                          {c.daily_change_pct}%)
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </label>
-              ))}
-            </div>
-          )}
-        </div>
+        <input
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setSelected(null);
+          }}
+          placeholder="Search ISIN, name, or underlying (e.g. Tesla)…"
+          className="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2 outline-none focus:border-neutral-500"
+        />
+      </section>
+
+      {results.length > 0 && (
+        <section className="mb-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-6">
+          <div className="mb-3 text-sm text-neutral-400">
+            Showing {results.length} of {totalCount} contract{totalCount === 1 ? "" : "s"}
+            {directionFilter ? ` (${directionFilter} only)` : ""}
+            {totalCount > results.length ? ` — fetched sorted by turnover; click any column header below to re-sort` : ""}
+          </div>
+          <div className="max-h-[32rem] overflow-y-auto rounded-lg border border-neutral-800">
+            <table className="w-full text-left text-sm">
+              <thead className="sticky top-0 bg-neutral-800 text-xs uppercase tracking-wide text-neutral-500">
+                <tr>
+                  <th className="px-3 py-2"></th>
+                  {(
+                    [
+                      ["name", "Name"],
+                      ["underlying", "Underlying"],
+                      ["isin", "ISIN"],
+                      ["direction", "Dir"],
+                      ["leverage", "Lev"],
+                      ["buy_price", "Buy"],
+                      ["sell_price", "Sell"],
+                      ["last_price", "Last"],
+                      ["daily_change_pct", "Daily %"],
+                    ] as [keyof Cert, string][]
+                  ).map(([key, label]) => (
+                    <th key={key} className="px-3 py-2">
+                      <button
+                        onClick={() => toggleSort(key)}
+                        className="flex items-center gap-1 hover:text-neutral-200"
+                      >
+                        {label}
+                        {sortKey === key && <span>{sortDir === "asc" ? "▲" : "▼"}</span>}
+                      </button>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {sortedResults.map((c) => {
+                  const isLong = c.direction?.toLowerCase() === "long";
+                  const isShort = c.direction?.toLowerCase() === "short";
+                  const isSelected = selected?.isin === c.isin;
+                  return (
+                    <tr
+                      key={c.isin}
+                      onClick={() => (isSelected ? setSelected(null) : selectCert(c))}
+                      className={`cursor-pointer border-t border-neutral-800 border-l-2 transition ${
+                        isLong ? "border-l-emerald-500 bg-emerald-500/[0.06]" : ""
+                      } ${isShort ? "border-l-red-500 bg-red-500/[0.06]" : ""} ${
+                        isSelected ? "outline outline-1 outline-neutral-400" : "hover:brightness-125"
+                      }`}
+                    >
+                      <td className="px-3 py-2">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => (isSelected ? setSelected(null) : selectCert(c))}
+                          onClick={(e) => e.stopPropagation()}
+                          className="h-4 w-4 accent-neutral-100"
+                        />
+                      </td>
+                      <td className="px-3 py-2 font-medium">{c.name}</td>
+                      <td className="px-3 py-2 text-neutral-300">{c.underlying ?? "–"}</td>
+                      <td className="px-3 py-2 font-mono text-xs text-neutral-400">{c.isin}</td>
+                      <td className={`px-3 py-2 font-medium ${isLong ? "text-emerald-400" : isShort ? "text-red-400" : ""}`}>
+                        {c.direction ?? "–"}
+                      </td>
+                      <td className="px-3 py-2">{c.leverage ? `${c.leverage}x` : "–"}</td>
+                      <td className="px-3 py-2">{c.buy_price ?? "–"}</td>
+                      <td className="px-3 py-2">{c.sell_price ?? "–"}</td>
+                      <td className="px-3 py-2">{c.last_price ?? "–"}</td>
+                      <td className="px-3 py-2">
+                        {c.daily_change_pct != null ? (
+                          <span className={c.daily_change_pct >= 0 ? "text-emerald-400" : "text-red-400"}>
+                            {c.daily_change_pct >= 0 ? "+" : ""}
+                            {c.daily_change_pct}%
+                          </span>
+                        ) : (
+                          "–"
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      <section className="mb-10 rounded-2xl border border-neutral-800 bg-neutral-900 p-6">
+        <h2 className="mb-3 text-lg font-medium">Add a position</h2>
+
+        {!selected && <p className="text-sm text-neutral-500">Select a contract from the search results above.</p>}
 
         {selected && (
           <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2 rounded-lg bg-neutral-800/60 px-3 py-2 text-sm text-neutral-300">
+              Selected: <span className="font-medium text-neutral-100">{selected.name}</span> ({selected.isin})
+            </div>
             <Field label="Entry price">
               <input
                 value={form.entry_price}
