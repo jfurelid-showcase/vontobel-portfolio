@@ -144,12 +144,13 @@ function Dashboard() {
       <div className="mb-6 flex items-center justify-between">
              <section className="flex-1 space-y-4">
           <div className="grid grid-cols-3 gap-4">
-            <NavStat label="Startkapital" value={baseCapital != null ? `${baseCapital.toLocaleString("sv-SE")} SEK` : "–"} />
-            <NavStat label="Startdatum" value={startDate ? new Date(startDate).toLocaleDateString("sv-SE") : "–"} />
+                    <NavStat label="Startkapital" value={baseCapital != null ? `${baseCapital.toLocaleString("sv-SE")} SEK` : "–"} compact />
+            <NavStat label="Startdatum" value={startDate ? new Date(startDate).toLocaleDateString("sv-SE") : "–"} compact />
             <NavStat
               label="NAV"
               value={latestNav.toFixed(2)}
               sub={baseCapital != null ? `${(baseCapital * (latestNav / 100)).toLocaleString("sv-SE", { maximumFractionDigits: 0 })} SEK` : undefined}
+              compact
             />
           </div>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -347,19 +348,23 @@ function NavStat({
   isPct,
   pctValue,
   sub,
+  compact,
 }: {
   label: string;
   value: string;
   isPct?: boolean;
   pctValue?: number | null;
   sub?: string;
+  compact?: boolean;
 }) {
   const color = isPct ? (pctValue == null ? "text-neutral-100" : pctValue >= 0 ? "text-emerald-400" : "text-red-400") : "text-neutral-100";
   return (
-    <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-4">
+    <div className={`rounded-2xl border border-neutral-800 bg-neutral-900 ${compact ? "p-3" : "p-4"}`}>
       <div className="text-xs text-neutral-500">{label}</div>
-      <div className={`mt-1 text-xl font-semibold ${color}`}>{value}</div>
-      {sub && <div className={`mt-0.5 text-xs ${color}`}>{sub}</div>}
+      <div className={`mt-1 whitespace-nowrap font-semibold ${color} ${compact ? "text-base sm:text-lg" : "text-xl"}`}>
+        {value}
+      </div>
+      {sub && <div className={`mt-0.5 truncate text-xs ${color}`}>{sub}</div>}
     </div>
   );
 }
