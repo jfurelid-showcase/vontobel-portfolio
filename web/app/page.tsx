@@ -99,39 +99,150 @@ function Dashboard() {
   const monthlyPct = useMemo(() => pctChangeSince(navHistory, latestNav, startOfMonth()), [navHistory, latestNav]);
   const ytdPct = useMemo(() => pctChangeSince(navHistory, latestNav, startOfYear()), [navHistory, latestNav]);
 
+  const [view, setView] = useState<"cards" | "list">("cards");
+
   const open = positions.filter((p) => p.status === "open");
-  const closed = positions.filter((p) => p.status === "closed");
+  const totalOpenPl = open.reduce((sum, p) => {
+    const price = p.current_price ?? p.entry_price;
+    const pl = p.quantity != null ? (price - p.entry_price) * p.quantity : p.stake_sek * ((price - p.entry_price) / p.entry_price);
+    return sum + pl;
+  }, 0);
+  const closedAll = positions
+    .filter((p) => p.status === "closed")
+    .sort((a, b) => new Date(b.exit_time ?? b.entry_time).getTime() - new Date(a.exit_time ?? a.entry_time).getTime());
+  const RECENT_CLOSED_LIMIT = 10;
+  const closed = closedAll.slice(0, RECENT_CLOSED_LIMIT);
 
   return (
     <>
-      <section className="mb-10 grid grid-cols-2 gap-4 sm:grid-cols-4">
-        <NavStat label="NAV" value={latestNav.toFixed(2)} />
-        <NavStat label="Today" value={fmtPct(dailyPct)} isPct pctValue={dailyPct} />
-        <NavStat label="This month" value={fmtPct(monthlyPct)} isPct pctValue={monthlyPct} />
-        <NavStat label="YTD" value={fmtPct(ytdPct)} isPct pctValue={ytdPct} />
-      </section>
+      <div className="mb-6 flex items-center justify-between">
+        <section className="grid flex-1 grid-cols-2 gap-4 sm:grid-cols-4">
+          <NavStat label="NAV" value={latestNav.toFixed(2)} />
+          <NavStat label="Today" value={fmtPct(dailyPct)} isPct pctValue={dailyPct} />
+          <NavStat label="This month" value={fmtPct(monthlyPct)} isPct pctValue={monthlyPct} />
+          <NavStat label="YTD" value={fmtPct(ytdPct)} isPct pctValue={ytdPct} />
+        </section>
+      </div>
+
+      <div className="mb-3 flex justify-end gap-2">
+        <div className="flex gap-1 rounded-lg border border-neutral-800 bg-neutral-900 p-1">
+          {(["cards", "list"] as const).map((v) => (
+            <button
+              key={v}
+              onClick={() => setView(v)}
+              className={`rounded-md px-3 py-1 text-xs font-medium capitalize transition ${
+                view === v ? "bg-neutral-100 text-neutral-900" : "text-neutral-400 hover:text-neutral-100"
+              }`}
+            >
+              {v}
+            </button>
+          ))}
+        </div>
+      </div>
 
       <section className="mb-10">
-        <h2 className="mb-3 text-lg font-medium text-neutral-300">Open positions ({open.length})</h2>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          {open.map((p) => (
-            <PositionCard key={p.id} p={p} />
-          ))}
-          {open.length === 0 && <p className="text-neutral-500">No open positions yet — add one from the Admin tab.</p>}
+        <div className="mb-3 flex items-baseline gap-3">
+          <h2 className="text-lg font-medium text-neutral-300">Open positions ({open.length})</h2>
+          {open.length > 0 && (
+            <span className={`text-sm font-medium ${totalOpenPl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+              {totalOpenPl >= 0 ? "+" : ""}
+              {totalOpenPl.toLocaleString("sv-SE", { maximumFractionDigits: 0 })} SEK open P/L
+            </span>
+          )}
         </div>
-      </section>
-
-      {closed.length > 0 && (
-        <section>
-          <h2 className="mb-3 text-lg font-medium text-neutral-300">Closed positions ({closed.length})</h2>
+        {open.length === 0 && <p className="text-neutral-500">No open positions yet — add one from the Admin tab.</p>}
+        {open.length > 0 && view === "cards" && (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            {closed.map((p) => (
+            {open.map((p) => (
               <PositionCard key={p.id} p={p} />
             ))}
           </div>
+        )}
+        {open.length > 0 && view === "list" && <PositionListView items={open} />}
+      </section>
+
+      {closedAll.length > 0 && (
+        <section>
+          <h2 className="mb-3 text-lg font-medium text-neutral-300">
+            Recently closed ({closed.length}{closedAll.length > closed.length ? ` of ${closedAll.length}` : ""})
+          </h2>
+          {view === "cards" && (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              {closed.map((p) => (
+                <PositionCard key={p.id} p={p} />
+              ))}
+            </div>
+          )}
+          {view === "list" && <PositionListView items={closed} />}
         </section>
       )}
     </>
+  );
+}
+
+function PositionListView({ items }: { items: Position[] }) {
+  return (
+    <div className="overflow-x-auto rounded-xl border border-neutral-800 bg-neutral-900">
+      <table className="w-full min-w-[720px] text-left text-sm">
+        <thead className="bg-neutral-800/60 text-xs uppercase tracking-wide text-neutral-500">
+          <tr>
+            <th className="px-3 py-2">Name</th>
+            <th className="px-3 py-2">Dir</th>
+            <th className="px-3 py-2">Entry</th>
+            <th className="px-3 py-2">{items[0]?.status === "closed" ? "Exit" : "Now"}</th>
+            <th className="px-3 py-2">Change</th>
+            <th className="px-3 py-2">P/L (SEK)</th>
+            <th className="px-3 py-2">Stop loss</th>
+            <th className="px-3 py-2">Target</th>
+            <th className="px-3 py-2">{items[0]?.status === "closed" ? "Closed" : "Updated"}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((p) => {
+            const isClosed = p.status === "closed";
+            const price = isClosed ? p.exit_price ?? p.entry_price : p.current_price ?? p.entry_price;
+            const change = ((price - p.entry_price) / p.entry_price) * 100;
+            const isUp = change >= 0;
+            const isLong = p.direction?.toLowerCase() === "long";
+            const isShort = p.direction?.toLowerCase() === "short";
+            const timestamp = isClosed ? p.exit_time : p.current_updated_at;
+            // Prefer quantity for an exact SEK figure; fall back to the
+            // stake-based % return if quantity isn't set (older positions).
+            const pl = p.quantity != null ? (price - p.entry_price) * p.quantity : p.stake_sek * (change / 100);
+            return (
+              <tr
+                key={p.id}
+                className={`border-t border-neutral-800 border-l-2 ${
+                  isLong ? "border-l-emerald-500" : isShort ? "border-l-red-500" : "border-l-transparent"
+                }`}
+              >
+                <td className="px-3 py-2 font-medium">
+                  {p.name} <span className="text-xs text-neutral-500">({p.isin})</span>
+                </td>
+                <td className={`px-3 py-2 ${isLong ? "text-emerald-400" : isShort ? "text-red-400" : ""}`}>
+                  {p.direction ?? "–"}
+                </td>
+                <td className="px-3 py-2">{p.entry_price}</td>
+                <td className="px-3 py-2">{price ?? "–"}</td>
+                <td className={`px-3 py-2 font-medium ${isUp ? "text-emerald-400" : "text-red-400"}`}>
+                  {isUp ? "+" : ""}
+                  {change.toFixed(2)}%
+                </td>
+                <td className={`px-3 py-2 font-medium ${pl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                  {pl >= 0 ? "+" : ""}
+                  {pl.toLocaleString("sv-SE", { maximumFractionDigits: 0 })}
+                </td>
+                <td className="px-3 py-2 text-neutral-400">{p.stop_loss ?? "–"}</td>
+                <td className="px-3 py-2 text-neutral-400">{p.target_price ?? "–"}</td>
+                <td className="px-3 py-2 text-xs text-neutral-500">
+                  {timestamp ? new Date(timestamp).toLocaleString("sv-SE") : "–"}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -293,6 +404,67 @@ function Admin() {
     if (!confirm("Close this position at its current price?")) return;
     await fetch(`/api/positions/${id}/close`, { method: "POST" });
     loadPositions();
+  }
+
+  async function reopenPosition(id: string) {
+    if (!confirm("Reopen this position? Its exit will be cleared and the worker will resume tracking it.")) return;
+    await fetch(`/api/positions/${id}/reopen`, { method: "POST" });
+    loadPositions();
+  }
+
+  async function deletePosition(id: string, name: string) {
+    if (!confirm(`Permanently delete "${name}"? This can't be undone.`)) return;
+    await fetch(`/api/positions/${id}`, { method: "DELETE" });
+    loadPositions();
+  }
+
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState({
+    entry_price: "",
+    quantity: "",
+    stop_loss: "",
+    target_price: "",
+    exit_price: "",
+    note: "",
+    podcast_episode: "",
+  });
+
+  function startEditing(p: Position) {
+    setEditingId(p.id);
+    setEditForm({
+      entry_price: String(p.entry_price ?? ""),
+      quantity: String(p.quantity ?? ""),
+      stop_loss: String(p.stop_loss ?? ""),
+      target_price: String(p.target_price ?? ""),
+      exit_price: String(p.exit_price ?? ""),
+      note: p.note ?? "",
+      podcast_episode: p.podcast_episode ?? "",
+    });
+  }
+
+  async function saveEdit(id: string, status: "open" | "closed") {
+    const payload: Record<string, unknown> = {
+      entry_price: parseFloat(editForm.entry_price),
+      quantity: parseFloat(editForm.quantity),
+      stop_loss: editForm.stop_loss ? parseFloat(editForm.stop_loss) : null,
+      target_price: editForm.target_price ? parseFloat(editForm.target_price) : null,
+      note: editForm.note || null,
+      podcast_episode: editForm.podcast_episode || null,
+    };
+    if (status === "closed") {
+      payload.exit_price = editForm.exit_price ? parseFloat(editForm.exit_price) : null;
+    }
+    const res = await fetch(`/api/positions/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (res.ok) {
+      setEditingId(null);
+      loadPositions();
+    } else {
+      alert((await res.json()).error || "Failed to save changes");
+    }
   }
 
   return (
@@ -500,29 +672,128 @@ function Admin() {
         <div className="space-y-3">
           {positions.map((p) => (
             <div key={p.id} className="rounded-xl border border-neutral-800 bg-neutral-900 p-4">
-              <div className="flex items-center justify-between">
+              {editingId === p.id ? (
                 <div>
-                  <div className="font-medium">
-                    {p.name}{" "}
-                    <span className="text-xs text-neutral-400">
-                      ({p.isin}) · {p.status}
-                    </span>
+                  <div className="mb-2 font-medium">
+                    Editing {p.name} <span className="text-xs text-neutral-400">({p.isin})</span>
                   </div>
-                  <div className="text-sm text-neutral-400">
-                    {p.quantity ? `${p.quantity} contracts · ` : ""}Entry {p.entry_price} → Now {p.current_price ?? "–"} · SL{" "}
-                    {p.stop_loss ?? "–"} · Target {p.target_price ?? "–"}
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                    <Field label="Entry price">
+                      <input
+                        value={editForm.entry_price}
+                        onChange={(e) => setEditForm({ ...editForm, entry_price: e.target.value })}
+                        className="input"
+                      />
+                    </Field>
+                    <Field label="Quantity">
+                      <input
+                        value={editForm.quantity}
+                        onChange={(e) => setEditForm({ ...editForm, quantity: e.target.value })}
+                        className="input"
+                      />
+                    </Field>
+                    <Field label="Stop loss">
+                      <input
+                        value={editForm.stop_loss}
+                        onChange={(e) => setEditForm({ ...editForm, stop_loss: e.target.value })}
+                        className="input"
+                      />
+                    </Field>
+                    <Field label="Target">
+                      <input
+                        value={editForm.target_price}
+                        onChange={(e) => setEditForm({ ...editForm, target_price: e.target.value })}
+                        className="input"
+                      />
+                    </Field>
+                    {p.status === "closed" && (
+                      <Field label="Exit price">
+                        <input
+                          value={editForm.exit_price}
+                          onChange={(e) => setEditForm({ ...editForm, exit_price: e.target.value })}
+                          className="input"
+                        />
+                      </Field>
+                    )}
+                    <Field label="Podcast episode" full>
+                      <input
+                        value={editForm.podcast_episode}
+                        onChange={(e) => setEditForm({ ...editForm, podcast_episode: e.target.value })}
+                        className="input"
+                      />
+                    </Field>
+                    <Field label="Rationale / note" full>
+                      <textarea
+                        value={editForm.note}
+                        onChange={(e) => setEditForm({ ...editForm, note: e.target.value })}
+                        rows={2}
+                        className="input"
+                      />
+                    </Field>
                   </div>
-                  <TradeNote note={p.note} podcastEpisode={p.podcast_episode} />
+                  <div className="mt-3 flex gap-2">
+                    <button
+                      onClick={() => saveEdit(p.id, p.status)}
+                      className="rounded-lg bg-neutral-100 px-4 py-1.5 text-sm font-medium text-neutral-900 hover:bg-white"
+                    >
+                      Save
+                    </button>
+                    <button
+                      onClick={() => setEditingId(null)}
+                      className="rounded-lg border border-neutral-700 px-4 py-1.5 text-sm hover:bg-neutral-800"
+                    >
+                      Cancel
+                    </button>
+                  </div>
                 </div>
-                {p.status === "open" && (
-                  <button
-                    onClick={() => closePosition(p.id)}
-                    className="rounded-lg border border-neutral-700 px-3 py-1 text-sm hover:bg-neutral-800"
-                  >
-                    Close
-                  </button>
-                )}
-              </div>
+              ) : (
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="font-medium">
+                      {p.name}{" "}
+                      <span className="text-xs text-neutral-400">
+                        ({p.isin}) · {p.status}
+                      </span>
+                    </div>
+                    <div className="text-sm text-neutral-400">
+                      {p.quantity ? `${p.quantity} contracts · ` : ""}Entry {p.entry_price} → Now{" "}
+                      {p.status === "closed" ? p.exit_price ?? "–" : p.current_price ?? "–"} · SL{" "}
+                      {p.stop_loss ?? "–"} · Target {p.target_price ?? "–"}
+                    </div>
+                    <TradeNote note={p.note} podcastEpisode={p.podcast_episode} />
+                  </div>
+                  <div className="flex shrink-0 gap-2">
+                    <button
+                      onClick={() => startEditing(p)}
+                      className="rounded-lg border border-neutral-700 px-3 py-1 text-sm hover:bg-neutral-800"
+                    >
+                      Edit
+                    </button>
+                    {p.status === "open" && (
+                      <button
+                        onClick={() => closePosition(p.id)}
+                        className="rounded-lg border border-neutral-700 px-3 py-1 text-sm hover:bg-neutral-800"
+                      >
+                        Close
+                      </button>
+                    )}
+                    {p.status === "closed" && (
+                      <button
+                        onClick={() => reopenPosition(p.id)}
+                        className="rounded-lg border border-neutral-700 px-3 py-1 text-sm hover:bg-neutral-800"
+                      >
+                        Reopen
+                      </button>
+                    )}
+                    <button
+                      onClick={() => deletePosition(p.id, p.name)}
+                      className="rounded-lg border border-red-900/60 px-3 py-1 text-sm text-red-400 hover:bg-red-950/40"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           ))}
           {positions.length === 0 && <p className="text-neutral-500">No positions yet.</p>}
