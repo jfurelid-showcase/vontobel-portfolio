@@ -142,42 +142,48 @@ function Dashboard() {
       </div>
 
       <div className="mb-6 flex items-center justify-between">
-        <section className="grid flex-1 grid-cols-2 gap-4 sm:grid-cols-4">
-          <NavStat
-            label="NAV"
-            value={latestNav.toFixed(2)}
-            sub={baseCapital != null ? `${(baseCapital * (latestNav / 100)).toLocaleString("sv-SE", { maximumFractionDigits: 0 })} SEK` : undefined}
-          />
-          <NavStat
-            label="Today"
-            value={fmtPct(dailyPct)}
-            isPct
-            pctValue={dailyPct}
-            sub={sekDelta(dailyPct, baseCapital)}
-          />
-          <NavStat
-            label="This month"
-            value={fmtPct(monthlyPct)}
-            isPct
-            pctValue={monthlyPct}
-            sub={sekDelta(monthlyPct, baseCapital)}
-          />
-          <NavStat
-            label="YTD"
-            value={fmtPct(ytdPct)}
-            isPct
-            pctValue={ytdPct}
-            sub={sekDelta(ytdPct, baseCapital)}
-          />          <NavStat
-            label="Since inception"
-            value={fmtPct(inceptionPct)}
-            isPct
-            pctValue={inceptionPct}
-            sub={sekDelta(inceptionPct, baseCapital)}
-          />
-                  <NavStat label="Startkapital" value={baseCapital != null ? `${baseCapital.toLocaleString("sv-SE")} SEK` : "–"} />
-        <NavStat label="Startdatum" value={startDate ? new Date(startDate).toLocaleDateString("sv-SE") : "–"} />
+             <section className="flex-1 space-y-4">
+          <div className="grid grid-cols-3 gap-4">
+            <NavStat label="Startkapital" value={baseCapital != null ? `${baseCapital.toLocaleString("sv-SE")} SEK` : "–"} />
+            <NavStat label="Startdatum" value={startDate ? new Date(startDate).toLocaleDateString("sv-SE") : "–"} />
+            <NavStat
+              label="NAV"
+              value={latestNav.toFixed(2)}
+              sub={baseCapital != null ? `${(baseCapital * (latestNav / 100)).toLocaleString("sv-SE", { maximumFractionDigits: 0 })} SEK` : undefined}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <NavStat
+              label="Today"
+              value={fmtPct(dailyPct)}
+              isPct
+              pctValue={dailyPct}
+              sub={sekDelta(dailyPct, baseCapital)}
+            />
+            <NavStat
+              label="This month"
+              value={fmtPct(monthlyPct)}
+              isPct
+              pctValue={monthlyPct}
+              sub={sekDelta(monthlyPct, baseCapital)}
+            />
+            <NavStat
+              label="YTD"
+              value={fmtPct(ytdPct)}
+              isPct
+              pctValue={ytdPct}
+              sub={sekDelta(ytdPct, baseCapital)}
+            />
+            <NavStat
+              label="Since inception"
+              value={fmtPct(inceptionPct)}
+              isPct
+              pctValue={inceptionPct}
+              sub={sekDelta(inceptionPct, baseCapital)}
+            />
+          </div>
         </section>
+      </div>
       </div>
 
       <div className="mb-6">
