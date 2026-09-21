@@ -43,9 +43,6 @@ export default function Home() {
         <div className="flex items-baseline gap-2.5">
           <img src="/vontobel-logo.png" alt="Vontobel" className="h-4 w-auto translate-y-[1px] opacity-60" />
           <span className="text-lg font-medium leading-none text-neutral-300">Portfolio</span>
-                    <div className="ml-2">
-            <TraderBadge />
-          </div>
         </div>
         <div className="flex gap-2 rounded-lg border border-neutral-800 bg-neutral-900 p-1">
           <button

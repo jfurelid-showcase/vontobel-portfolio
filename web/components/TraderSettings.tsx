@@ -7,6 +7,7 @@ const LEVELS = ["noob", "intermediate", "pro"] as const;
 
 export default function TraderSettings() {
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
+  const [name, setName] = useState("");
   const [level, setLevel] = useState<string>("intermediate");
   const [file, setFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
@@ -14,10 +15,11 @@ export default function TraderSettings() {
   useEffect(() => {
     supabase
       .from("portfolio_settings")
-      .select("trader_photo_url, trader_level")
+      .select("trader_photo_url, trader_name, trader_level")
       .single()
       .then(({ data }) => {
         setPhotoUrl(data?.trader_photo_url ?? null);
+        setName(data?.trader_name ?? "");
         setLevel(data?.trader_level ?? "intermediate");
       });
   }, []);
@@ -26,6 +28,7 @@ export default function TraderSettings() {
     setSaving(true);
     const formData = new FormData();
     if (file) formData.append("photo", file);
+    formData.append("name", name);
     formData.append("level", level);
 
     const res = await fetch("/api/settings/trader", { method: "POST", body: formData });
@@ -45,6 +48,15 @@ export default function TraderSettings() {
       <div className="flex items-center gap-4">
         {photoUrl && <img src={photoUrl} alt="Trader" className="h-16 w-16 rounded-full object-cover" />}
         <div className="flex-1 space-y-3">
+          <div>
+            <label className="mb-1 block text-sm text-neutral-400">Namn</label>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Trader's name"
+              className="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-sm outline-none focus:border-neutral-500"
+            />
+          </div>
           <div>
             <label className="mb-1 block text-sm text-neutral-400">Foto</label>
             <input

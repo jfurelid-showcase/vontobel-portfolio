@@ -3,13 +3,14 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 const BUCKET = "trader-photos";
 
-// Body: multipart/form-data with optional "photo" (file) and/or "level"
-// ("noob" | "intermediate" | "pro"). Stored on the single portfolio_settings
-// row (id=1) — this is a per-portfolio setting, not per-position.
+// Body: multipart/form-data with optional "photo" (file), "name", and/or
+// "level" ("noob" | "intermediate" | "pro"). Stored on the single
+// portfolio_settings row (id=1) — per-portfolio, not per-position.
 export async function POST(req: NextRequest) {
   const formData = await req.formData();
   const file = formData.get("photo") as File | null;
   const level = formData.get("level") as string | null;
+  const name = formData.get("name") as string | null;
 
   if (level && !["noob", "intermediate", "pro"].includes(level)) {
     return NextResponse.json({ error: "Invalid level" }, { status: 400 });
@@ -17,6 +18,7 @@ export async function POST(req: NextRequest) {
 
   const updates: Record<string, unknown> = {};
   if (level) updates.trader_level = level;
+  if (name != null) updates.trader_name = name.trim() || null;
 
   if (file && file.size > 0) {
     const arrayBuffer = await file.arrayBuffer();
@@ -31,8 +33,6 @@ export async function POST(req: NextRequest) {
     if (uploadErr) return NextResponse.json({ error: uploadErr.message }, { status: 500 });
 
     const { data: pub } = supabaseAdmin.storage.from(BUCKET).getPublicUrl(path);
-    // Cache-bust so a re-uploaded photo shows immediately instead of the
-    // browser/CDN serving the old cached image at the same URL.
     updates.trader_photo_url = `${pub.publicUrl}?t=${Date.now()}`;
   }
 
