@@ -184,7 +184,6 @@ function Dashboard() {
           </div>
         </section>
       </div>
-      </div>
 
       <div className="mb-6">
         <NavChart history={navHistory} />
