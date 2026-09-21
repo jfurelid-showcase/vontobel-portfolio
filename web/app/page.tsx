@@ -9,6 +9,7 @@ import TradeNote from "@/components/TradeNote";
 type Position = Parameters<typeof PositionCard>[0]["p"] & {
   stake_sek: number;
   quantity: number | null;
+  exit_time: string | null;
 };
 type NavPoint = { ts: string; nav: number };
 type Cert = {
