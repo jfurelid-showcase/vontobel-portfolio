@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { pctChangeSince, startOfDayStockholm, startOfMonth, startOfYear } from "@/lib/nav";
 import PositionCard from "@/components/PositionCard";
 import TradeNote from "@/components/TradeNote";
+import NavChart from "@/components/NavChart";
 
 type Position = Parameters<typeof PositionCard>[0]["p"] & {
   stake_sek: number;
@@ -123,6 +124,10 @@ function Dashboard() {
           <NavStat label="This month" value={fmtPct(monthlyPct)} isPct pctValue={monthlyPct} />
           <NavStat label="YTD" value={fmtPct(ytdPct)} isPct pctValue={ytdPct} />
         </section>
+      </div>
+
+      <div className="mb-6">
+        <NavChart history={navHistory} />
       </div>
 
       <div className="mb-3 flex justify-end gap-2">
