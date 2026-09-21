@@ -50,8 +50,9 @@ function mapItemToCertificate(item) {
     sell_price: item.bidprice ?? null,
     last_price: item.lastprice ?? null,
     direction: item.funddirection ?? null,
-    leverage: item.fundleverage ?? null,
-    instrument_type: item.type ?? null,
+    // NGM stores leverage with two implicit decimals (300 = 3.00x) —
+    // confirmed via "BULL NVIDIA X3" showing raw value 300 for actual 3x.
+    leverage: item.fundleverage != null ? item.fundleverage / 100 : null,
     daily_change_pct: item.dailyPerformance ?? null,
     turnover: item.turnover ?? null,
     ngm_updated_at: null, // API doesn't expose a per-instrument "last updated" timestamp
