@@ -369,7 +369,7 @@ function Admin() {
     }
   }
 
-  function selectCert(c: Cert) {
+function selectCert(c: Cert) {
     setSelected(c);
     const fallbackPrice =
       c.last_price ??
@@ -381,6 +381,16 @@ function Admin() {
     setResults([]);
     suppressNextSearch.current = true; // selecting shouldn't immediately re-search and reopen the list
     setQuery(c.name);
+
+    // The search result's price can be up to a day stale (once-daily
+    // full-list scrape) — fetch a genuinely live price for this one
+    // instrument and correct the field once it arrives.
+    fetch(`/api/certificates/live-price?isin=${c.isin}`)
+      .then((r) => r.json())
+      .then(({ price }) => {
+        if (price != null) setForm((f) => ({ ...f, entry_price: String(price) }));
+      })
+      .catch(() => {}); // keep the stale fallback if the live fetch fails
   }
 
   async function addPosition() {
