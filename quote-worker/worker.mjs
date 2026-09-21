@@ -115,22 +115,35 @@ async function tick() {
     })
   );
 
-  let nav = 0;
   const { data: settings } = await supabase.from("portfolio_settings").select("cash_sek").single();
-  nav += settings?.cash_sek || 0;
+  const cashSek = settings?.cash_sek || 0;
+
+  // NAV as an index starting at 100, not a raw SEK total — this way it
+  // reflects the portfolio's weighted-average % return regardless of how
+  // many positions exist or how much stake each one has, and deleting a
+  // stray/duplicate test position doesn't look like a crash.
+  //   totalStake = the "cost basis" — every SEK ever put into a position
+  //   totalValue = what that stake is worth now (open: at current price;
+  //                closed: at its exit price), plus untouched cash
+  // index = 100 * totalValue / totalStake
+  let totalStake = cashSek;
+  let totalValue = cashSek;
 
   for (const pos of openPositions) {
-    const price = priceByIsin.get(pos.isin);
-    if (price == null) continue; // no fresh price this tick — leave position as-is, try again next tick
+    const price = priceByIsin.get(pos.isin) ?? pos.current_price; // fall back to last known price if this tick's fetch failed
+    totalStake += pos.stake_sek;
+    if (price != null) totalValue += pos.stake_sek * (price / pos.entry_price);
+    else totalValue += pos.stake_sek; // no price at all yet — treat as unchanged rather than dropping it from the index
 
-    nav += pos.stake_sek * (price / pos.entry_price);
+    const freshPrice = priceByIsin.get(pos.isin);
+    if (freshPrice == null) continue; // nothing new to write for this position this tick
 
     await supabase
       .from("portfolio_positions")
-      .update({ current_price: price, current_updated_at: now })
+      .update({ current_price: freshPrice, current_updated_at: now })
       .eq("id", pos.id);
 
-    await supabase.from("price_ticks").insert({ position_id: pos.id, price, ts: now });
+    await supabase.from("price_ticks").insert({ position_id: pos.id, price: freshPrice, ts: now });
   }
 
   const { data: closedPositions } = await supabase
@@ -138,8 +151,11 @@ async function tick() {
     .select("stake_sek, entry_price, exit_price")
     .eq("status", "closed");
   for (const pos of closedPositions || []) {
-    if (pos.exit_price != null) nav += pos.stake_sek * (pos.exit_price / pos.entry_price);
+    totalStake += pos.stake_sek;
+    totalValue += pos.exit_price != null ? pos.stake_sek * (pos.exit_price / pos.entry_price) : pos.stake_sek;
   }
+
+  const nav = totalStake > 0 ? (100 * totalValue) / totalStake : 100;
 
   await supabase.from("nav_history").insert({ ts: now, nav });
   console.log(`Tick ${now}: ${priceByIsin.size}/${isins.length} prices updated, NAV=${nav.toFixed(2)}`);
