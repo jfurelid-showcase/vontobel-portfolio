@@ -116,6 +116,14 @@ function Dashboard() {
   const dailyPct = useMemo(() => pctChangeSince(navHistory, latestNav, startOfDayStockholm()), [navHistory, latestNav]);
   const monthlyPct = useMemo(() => pctChangeSince(navHistory, latestNav, startOfMonth()), [navHistory, latestNav]);
   const ytdPct = useMemo(() => pctChangeSince(navHistory, latestNav, startOfYear()), [navHistory, latestNav]);
+    const inceptionPct = useMemo(
+    () => (navHistory.length > 0 ? pctChangeSince(navHistory, latestNav, new Date(navHistory[0].ts)) : null),
+    [navHistory, latestNav]
+  );
+    const inceptionPct = useMemo(
+    () => (navHistory.length > 0 ? pctChangeSince(navHistory, latestNav, new Date(navHistory[0].ts)) : null),
+    [navHistory, latestNav]
+  );
 
   const [view, setView] = useState<"cards" | "list">("cards");
 
@@ -164,6 +172,12 @@ function Dashboard() {
             isPct
             pctValue={ytdPct}
             sub={sekDelta(ytdPct, baseCapital)}
+          />          <NavStat
+            label="Since inception"
+            value={fmtPct(inceptionPct)}
+            isPct
+            pctValue={inceptionPct}
+            sub={sekDelta(inceptionPct, baseCapital)}
           />
                   <NavStat label="Startkapital" value={baseCapital != null ? `${baseCapital.toLocaleString("sv-SE")} SEK` : "–"} />
         <NavStat label="Startdatum" value={startDate ? new Date(startDate).toLocaleDateString("sv-SE") : "–"} />
