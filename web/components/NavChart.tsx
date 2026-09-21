@@ -19,15 +19,10 @@ export default function NavChart({ history }: { history: NavPoint[] }) {
     if (!activeRange?.ms || history.length === 0) return history;
     const cutoff = Date.now() - activeRange.ms;
     const inRange = history.filter((p) => new Date(p.ts).getTime() >= cutoff);
-    // Always keep at least one point before the cutoff so the line has a
-    // sensible starting point instead of looking flat/empty for a young
-    // portfolio with no history that old yet.
     if (inRange.length < 2) return history.slice(-2);
     return inRange;
   }, [history, range]);
 
-  // Downsample so the SVG path never gets absurdly long (the worker ticks
-  // every ~10s, so "All" history can accumulate tens of thousands of rows).
   const points = useMemo(() => {
     const MAX_POINTS = 400;
     if (filtered.length <= MAX_POINTS) return filtered;
@@ -47,23 +42,38 @@ export default function NavChart({ history }: { history: NavPoint[] }) {
   }
 
   const width = 800;
-  const height = 200;
-  const padding = 8;
+  const height = 220;
+  const padding = { top: 16, right: 12, bottom: 24, left: 52 };
+  const plotW = width - padding.left - padding.right;
+  const plotH = height - padding.top - padding.bottom;
 
   const navValues = points.map((p) => p.nav);
-  const min = Math.min(...navValues);
-  const max = Math.max(...navValues);
+  const rawMin = Math.min(...navValues);
+  const rawMax = Math.max(...navValues);
+  // Pad the range a bit so the line never touches the very top/bottom edge.
+  const pad = (rawMax - rawMin) * 0.08 || 1;
+  const min = rawMin - pad;
+  const max = rawMax + pad;
   const spread = max - min || 1;
 
-  const x = (i: number) => padding + (i / (points.length - 1)) * (width - padding * 2);
-  const y = (nav: number) => height - padding - ((nav - min) / spread) * (height - padding * 2);
+  const x = (i: number) => padding.left + (i / (points.length - 1)) * plotW;
+  const y = (nav: number) => padding.top + plotH - ((nav - min) / spread) * plotH;
 
   const linePath = points.map((p, i) => `${i === 0 ? "M" : "L"} ${x(i).toFixed(1)} ${y(p.nav).toFixed(1)}`).join(" ");
-  const areaPath = `${linePath} L ${x(points.length - 1).toFixed(1)} ${height - padding} L ${x(0).toFixed(1)} ${height - padding} Z`;
+  const areaPath = `${linePath} L ${x(points.length - 1).toFixed(1)} ${padding.top + plotH} L ${x(0).toFixed(1)} ${padding.top + plotH} Z`;
 
   const isUp = points[points.length - 1].nav >= points[0].nav;
-  const color = isUp ? "#34d399" : "#f87171"; // emerald-400 / red-400
+  const color = isUp ? "#34d399" : "#f87171";
   const gradientId = `nav-gradient-${isUp ? "up" : "down"}`;
+
+  // 4 evenly spaced y-axis gridlines/labels.
+  const Y_TICKS = 4;
+  const yTicks = Array.from({ length: Y_TICKS + 1 }, (_, i) => min + (spread * i) / Y_TICKS);
+
+  // A handful of x-axis date labels, evenly spaced across the points.
+  const X_TICKS = 5;
+  const xTickIdxs = Array.from({ length: X_TICKS }, (_, i) => Math.round((i / (X_TICKS - 1)) * (points.length - 1)));
+  const dedupedXTicks = [...new Set(xTickIdxs)];
 
   return (
     <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
@@ -91,17 +101,42 @@ export default function NavChart({ history }: { history: NavPoint[] }) {
             <stop offset="100%" stopColor={color} stopOpacity="0" />
           </linearGradient>
         </defs>
+
+        {/* y-axis gridlines + labels */}
+        {yTicks.map((v, i) => (
+          <g key={i}>
+            <line
+              x1={padding.left}
+              x2={width - padding.right}
+              y1={y(v)}
+              y2={y(v)}
+              stroke="#27272a"
+              strokeWidth="1"
+              strokeDasharray={i === 0 ? undefined : "3 3"}
+            />
+            <text x={padding.left - 8} y={y(v)} textAnchor="end" dominantBaseline="middle" fontSize="11" fill="#737373">
+              {v.toFixed(2)}
+            </text>
+          </g>
+        ))}
+
         <path d={areaPath} fill={`url(#${gradientId})`} stroke="none" />
         <path d={linePath} fill="none" stroke={color} strokeWidth="1.5" />
-      </svg>
 
-      <div className="mt-1 flex justify-between text-xs text-neutral-500">
-        <span>{new Date(points[0].ts).toLocaleDateString("sv-SE")}</span>
-        <span>
-          {min.toFixed(2)} – {max.toFixed(2)}
-        </span>
-        <span>{new Date(points[points.length - 1].ts).toLocaleDateString("sv-SE")}</span>
-      </div>
+        {/* x-axis date labels */}
+        {dedupedXTicks.map((idx) => (
+          <text
+            key={idx}
+            x={x(idx)}
+            y={height - 6}
+            textAnchor={idx === 0 ? "start" : idx === points.length - 1 ? "end" : "middle"}
+            fontSize="11"
+            fill="#737373"
+          >
+            {new Date(points[idx].ts).toLocaleDateString("sv-SE", { month: "short", day: "numeric" })}
+          </text>
+        ))}
+      </svg>
     </div>
   );
 }
