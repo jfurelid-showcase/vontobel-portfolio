@@ -3,16 +3,21 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export async function GET(req: NextRequest) {
   const q = req.nextUrl.searchParams.get("q")?.trim() || "";
-  if (q.length < 2) return NextResponse.json([]);
+  if (q.length < 2) return NextResponse.json({ results: [], totalCount: 0 });
 
-  const { data, error } = await supabaseAdmin
+  const { data, error, count } = await supabaseAdmin
     .from("certificates_full")
     .select(
-      "isin, name, underlying, direction, leverage, last_price, buy_price, sell_price, daily_change_pct"
+      "isin, name, underlying, direction, leverage, last_price, buy_price, sell_price, daily_change_pct",
+      { count: "exact" }
     )
     .or(`isin.ilike.%${q}%,name.ilike.%${q}%,underlying.ilike.%${q}%`)
-    .limit(25);
+    // Show the most liquid/relevant matches first — turnover is a reasonable
+    // proxy for "actively traded" when searching a broad term like an
+    // underlying name that can match dozens of leverage/strike variants.
+    .order("turnover", { ascending: false, nullsFirst: false })
+    .limit(100);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json(data);
+  return NextResponse.json({ results: data, totalCount: count ?? data.length });
 }

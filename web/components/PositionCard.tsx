@@ -68,9 +68,9 @@ export default function PositionCard({ p }: { p: Position }) {
       </div>
 
       {(p.note || p.podcast_episode) && (
-        <div className="mt-3 rounded-lg bg-neutral-800/60 p-3 text-sm text-neutral-300">
-          {p.note && <p>{p.note}</p>}
-          {p.podcast_episode && <p className="mt-1 text-xs text-neutral-500">🎙️ {p.podcast_episode}</p>}
+        <div className="mt-3 rotate-[-1deg] rounded-sm bg-amber-200 p-3 text-sm text-neutral-900 shadow-md">
+          {p.note && <p className="whitespace-pre-wrap">{p.note}</p>}
+          {p.podcast_episode && <p className="mt-1 text-xs font-medium text-amber-800">🎙️ {p.podcast_episode}</p>}
         </div>
       )}
     </div>

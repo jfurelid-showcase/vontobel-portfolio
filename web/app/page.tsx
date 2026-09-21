@@ -34,7 +34,10 @@ export default function Home() {
   return (
     <main className="mx-auto max-w-5xl px-4 py-10 text-neutral-100">
       <div className="mb-8 flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Vontobel Portfolio</h1>
+        <div className="flex items-center gap-3">
+          <img src="/vontobel-logo.png" alt="Vontobel" className="h-6 w-auto" />
+          <span className="text-lg font-medium text-neutral-400">Portfolio</span>
+        </div>
         <div className="flex gap-2 rounded-lg border border-neutral-800 bg-neutral-900 p-1">
           <button
             onClick={() => setTab("dashboard")}
@@ -163,6 +166,7 @@ function Admin() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Cert[]>([]);
   const [selected, setSelected] = useState<Cert | null>(null);
+  const [totalCount, setTotalCount] = useState(0);
   const [positions, setPositions] = useState<Position[]>([]);
   const [form, setForm] = useState({
     entry_price: "",
@@ -180,9 +184,15 @@ function Admin() {
 
   useEffect(() => {
     const t = setTimeout(async () => {
-      if (query.trim().length < 2) return setResults([]);
+      if (query.trim().length < 2) {
+        setResults([]);
+        setTotalCount(0);
+        return;
+      }
       const res = await fetch(`/api/certificates/search?q=${encodeURIComponent(query)}`);
-      setResults(await res.json());
+      const { results, totalCount } = await res.json();
+      setResults(results || []);
+      setTotalCount(totalCount || 0);
     }, 250);
     return () => clearTimeout(t);
   }, [query]);
@@ -194,7 +204,13 @@ function Admin() {
 
   function selectCert(c: Cert) {
     setSelected(c);
-    setForm((f) => ({ ...f, entry_price: String(c.last_price ?? "") }));
+    const fallbackPrice =
+      c.last_price ??
+      (c.buy_price != null && c.sell_price != null ? (c.buy_price + c.sell_price) / 2 : null) ??
+      c.buy_price ??
+      c.sell_price ??
+      null;
+    setForm((f) => ({ ...f, entry_price: fallbackPrice != null ? String(fallbackPrice) : "" }));
     setResults([]);
     setQuery(c.name);
   }
@@ -247,16 +263,28 @@ function Admin() {
             className="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2 outline-none focus:border-neutral-500"
           />
           {results.length > 0 && (
-            <ul className="absolute z-10 mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-800 shadow-xl">
+            <ul className="absolute z-10 mt-1 max-h-96 w-full overflow-y-auto rounded-lg border border-neutral-700 bg-neutral-800 shadow-xl">
+              <li className="sticky top-0 border-b border-neutral-700 bg-neutral-800 px-3 py-1.5 text-xs text-neutral-500">
+                {totalCount} match{totalCount === 1 ? "" : "es"}
+                {totalCount > results.length ? ` (showing top ${results.length}, sorted by turnover — refine your search to narrow further)` : ""}
+              </li>
               {results.map((c) => (
                 <li
                   key={c.isin}
                   onClick={() => selectCert(c)}
-                  className="cursor-pointer px-3 py-2 hover:bg-neutral-700"
+                  className="cursor-pointer border-b border-neutral-800 px-3 py-2 last:border-0 hover:bg-neutral-700"
                 >
                   <div className="font-medium">{c.name}</div>
                   <div className="text-xs text-neutral-400">
-                    {c.isin} · {c.underlying} · {c.direction} {c.leverage}x · last {c.last_price}
+                    <span className="text-neutral-300">{c.underlying}</span> · {c.isin} · {c.direction}{" "}
+                    {c.leverage ? `${c.leverage}x` : ""} · last {c.last_price ?? "–"}
+                    {c.daily_change_pct != null && (
+                      <span className={c.daily_change_pct >= 0 ? "text-emerald-400" : "text-red-400"}>
+                        {" "}
+                        ({c.daily_change_pct >= 0 ? "+" : ""}
+                        {c.daily_change_pct}%)
+                      </span>
+                    )}
                   </div>
                 </li>
               ))}
@@ -338,9 +366,13 @@ function Admin() {
                     Entry {p.entry_price} → Now {p.current_price ?? "–"} · SL {p.stop_loss ?? "–"} · Target{" "}
                     {p.target_price ?? "–"}
                   </div>
-                  {p.note && <div className="mt-1 text-sm text-neutral-300">📝 {p.note}</div>}
-                  {p.podcast_episode && (
-                    <div className="text-xs text-neutral-500">🎙️ {p.podcast_episode}</div>
+                  {(p.note || p.podcast_episode) && (
+                    <div className="mt-2 max-w-sm rotate-[-1deg] rounded-sm bg-amber-200 p-3 text-sm text-neutral-900 shadow-md">
+                      {p.note && <p className="whitespace-pre-wrap">{p.note}</p>}
+                      {p.podcast_episode && (
+                        <p className="mt-1 text-xs font-medium text-amber-800">🎙️ {p.podcast_episode}</p>
+                      )}
+                    </div>
                   )}
                 </div>
                 {p.status === "open" && (
