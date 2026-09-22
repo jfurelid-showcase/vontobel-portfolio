@@ -80,10 +80,6 @@ function Dashboard() {
     const [baseCapital, setBaseCapital] = useState<number | null>(null);
   const [startDate, setStartDate] = useState<string | null>(null);
 
-Ran a command
-bash
-
-cat > /mnt/user-data/outputs/loadAll-patch.txt << 'EOF'
   const [refNavs, setRefNavs] = useState<{
     today: number | null;
     month: number | null;
@@ -107,6 +103,21 @@ cat > /mnt/user-data/outputs/loadAll-patch.txt << 'EOF'
     setNavHistory(((nav as NavPoint[]) || []).slice().reverse());
   }
 
+  async function loadReferenceNavs() {
+    async function firstNavAtOrAfter(cutoff: Date | null) {
+      let q = supabase.from("nav_history").select("nav").order("ts", { ascending: true }).limit(1);
+      if (cutoff) q = q.gte("ts", cutoff.toISOString());
+      const { data } = await q.maybeSingle();
+      return data?.nav ?? null;
+    }
+    const [today, month, year, inception] = await Promise.all([
+      firstNavAtOrAfter(startOfDayStockholm()),
+      firstNavAtOrAfter(startOfMonth()),
+      firstNavAtOrAfter(startOfYear()),
+      firstNavAtOrAfter(null),
+    ]);
+    setRefNavs({ today, month, year, inception });
+  }
   async function loadReferenceNavs() {
     async function firstNavAtOrAfter(cutoff: Date | null) {
       let q = supabase.from("nav_history").select("nav").order("ts", { ascending: true }).limit(1);
@@ -181,13 +192,14 @@ Output
   }, []);
 
   const latestNav = navHistory.at(-1)?.nav ?? 100;
-  const dailyPct = useMemo(() => pctChangeSince(navHistory, latestNav, startOfDayStockholm()), [navHistory, latestNav]);
-  const monthlyPct = useMemo(() => pctChangeSince(navHistory, latestNav, startOfMonth()), [navHistory, latestNav]);
-  const ytdPct = useMemo(() => pctChangeSince(navHistory, latestNav, startOfYear()), [navHistory, latestNav]);
-    const inceptionPct = useMemo(
-    () => (navHistory.length > 0 ? pctChangeSince(navHistory, latestNav, new Date(navHistory[0].ts)) : null),
-    [navHistory, latestNav]
-  );
+  function pctFrom(ref: number | null) {
+    if (ref == null || ref === 0) return null;
+    return ((latestNav - ref) / ref) * 100;
+  }
+  const dailyPct = useMemo(() => pctFrom(refNavs.today), [refNavs.today, latestNav]);
+  const monthlyPct = useMemo(() => pctFrom(refNavs.month), [refNavs.month, latestNav]);
+  const ytdPct = useMemo(() => pctFrom(refNavs.year), [refNavs.year, latestNav]);
+  const inceptionPct = useMemo(() => pctFrom(refNavs.inception), [refNavs.inception, latestNav]);
 
   const [view, setView] = useState<"cards" | "list">("cards");
 
