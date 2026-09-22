@@ -77,7 +77,7 @@ export default function Home() {
 function Dashboard() {
   const [positions, setPositions] = useState<Position[]>([]);
   const [navHistory, setNavHistory] = useState<NavPoint[]>([]);
-    const [baseCapital, setBaseCapital] = useState<number | null>(null);
+  const [baseCapital, setBaseCapital] = useState<number | null>(null);
   const [startDate, setStartDate] = useState<string | null>(null);
 
   const [refNavs, setRefNavs] = useState<{
@@ -87,62 +87,12 @@ function Dashboard() {
     inception: number | null;
   }>({ today: null, month: null, year: null, inception: null });
 
-  async function loadAll() {
-    // Supabase caps a single query's rows (default 1000) regardless of any
-    // date filter. With a tick every ~10s, "last 60 days" can silently be
-    // capped at the OLDEST rows in that window rather than the newest — so
-    // we fetch a bounded recent slice here (enough for the chart's longest
-    // view) and get each stat's reference point separately below, via its
-    // own tiny single-row query. That keeps every stat correct regardless
-    // of how much history has piled up.
-    const [{ data: pos }, { data: nav }] = await Promise.all([
-      supabase.from("portfolio_positions").select("*").order("created_at", { ascending: false }),
-      supabase.from("nav_history").select("ts, nav").order("ts", { ascending: false }).limit(8000),
-    ]);
-    setPositions((pos as Position[]) || []);
-    setNavHistory(((nav as NavPoint[]) || []).slice().reverse());
-  }
-
-  async function loadReferenceNavs() {
-    async function firstNavAtOrAfter(cutoff: Date | null) {
-      let q = supabase.from("nav_history").select("nav").order("ts", { ascending: true }).limit(1);
-      if (cutoff) q = q.gte("ts", cutoff.toISOString());
-      const { data } = await q.maybeSingle();
-      return data?.nav ?? null;
-    }
-    const [today, month, year, inception] = await Promise.all([
-      firstNavAtOrAfter(startOfDayStockholm()),
-      firstNavAtOrAfter(startOfMonth()),
-      firstNavAtOrAfter(startOfYear()),
-      firstNavAtOrAfter(null),
-    ]);
-    setRefNavs({ today, month, year, inception });
-  }
-  async function loadReferenceNavs() {
-    async function firstNavAtOrAfter(cutoff: Date | null) {
-      let q = supabase.from("nav_history").select("nav").order("ts", { ascending: true }).limit(1);
-      if (cutoff) q = q.gte("ts", cutoff.toISOString());
-      const { data } = await q.maybeSingle();
-      return data?.nav ?? null;
-    }
-    const [today, month, year, inception] = await Promise.all([
-      firstNavAtOrAfter(startOfDayStockholm()),
-      firstNavAtOrAfter(startOfMonth()),
-      firstNavAtOrAfter(startOfYear()),
-      firstNavAtOrAfter(null),
-    ]);
-    setRefNavs({ today, month, year, inception });
-  }
-EOF
-cat /mnt/user-data/outputs/loadAll-patch.txt
-Output
-
-  const [refNavs, setRefNavs] = useState<{
-    today: number | null;
-    month: number | null;
-    year: number | null;
-    inception: number | null;
-  }>({ today: null, month: null, year: null, inception: null });
+  useEffect(() => {
+    supabase.from("portfolio_settings").select("cash_sek").single()
+      .then(({ data }) => setBaseCapital(data?.cash_sek ?? null));
+    supabase.from("nav_history").select("ts").order("ts", { ascending: true }).limit(1)
+      .then(({ data }) => setStartDate(data?.[0]?.ts ?? null));
+  }, []);
 
   async function loadAll() {
     // Supabase caps a single query's rows (default 1000) regardless of any
@@ -176,7 +126,7 @@ Output
     setRefNavs({ today, month, year, inception });
   }
 
-    useEffect(() => {
+  useEffect(() => {
     loadAll();
     loadReferenceNavs();
     const channel = supabase
@@ -186,6 +136,7 @@ Output
         loadAll();
         loadReferenceNavs();
       })
+      .subscribe();
     return () => {
       supabase.removeChannel(channel);
     };
@@ -215,16 +166,16 @@ Output
   const RECENT_CLOSED_LIMIT = 10;
   const closed = closedAll.slice(0, RECENT_CLOSED_LIMIT);
 
-   return (
+  return (
     <>
       <div className="mb-4">
         <TraderBadge />
       </div>
 
-      <div className="mb-6 flex items-center justify-between">
-             <section className="flex-1 space-y-4">
+      <div className="mb-6">
+        <section className="flex-1 space-y-4">
           <div className="grid grid-cols-3 gap-4">
-                    <NavStat label="Startkapital" value={baseCapital != null ? `${baseCapital.toLocaleString("sv-SE")} SEK` : "–"} compact />
+            <NavStat label="Startkapital" value={baseCapital != null ? `${baseCapital.toLocaleString("sv-SE")} SEK` : "–"} compact />
             <NavStat label="Startdatum" value={startDate ? new Date(startDate).toLocaleDateString("sv-SE") : "–"} compact />
             <NavStat
               label="NAV"
@@ -537,7 +488,7 @@ function Admin() {
     }
   }
 
-function selectCert(c: Cert) {
+  function selectCert(c: Cert) {
     setSelected(c);
     const fallbackPrice =
       c.last_price ??
@@ -657,8 +608,8 @@ function selectCert(c: Cert) {
 
   return (
     <>
-            <TraderSettings />
-            <section className="mb-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-6">
+      <TraderSettings />
+      <section className="mb-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-6">
         <div className="mb-3 flex items-baseline justify-between">
           <h2 className="text-lg font-medium">Search contracts</h2>
           <span className="text-xs text-neutral-500">
@@ -760,7 +711,7 @@ function selectCert(c: Cert) {
                       <td className={`px-3 py-2 font-medium ${isLong ? "text-emerald-400" : isShort ? "text-red-400" : ""}`}>
                         {c.direction ?? "–"}
                       </td>
-                                            <td className="px-3 py-2">
+                      <td className="px-3 py-2">
                         {c.leverage ? `${c.leverage}x` : c.instrument_type ?? "–"}
                       </td>
                       <td className="px-3 py-2">{c.buy_price != null ? c.buy_price.toFixed(2) : "–"}</td>
