@@ -80,33 +80,101 @@ function Dashboard() {
     const [baseCapital, setBaseCapital] = useState<number | null>(null);
   const [startDate, setStartDate] = useState<string | null>(null);
 
-  useEffect(() => {
-    supabase.from("portfolio_settings").select("cash_sek").single()
-      .then(({ data }) => setBaseCapital(data?.cash_sek ?? null));
-    supabase.from("nav_history").select("ts").order("ts", { ascending: true }).limit(1)
-      .then(({ data }) => setStartDate(data?.[0]?.ts ?? null));
-  }, []);
+Ran a command
+bash
+
+cat > /mnt/user-data/outputs/loadAll-patch.txt << 'EOF'
+  const [refNavs, setRefNavs] = useState<{
+    today: number | null;
+    month: number | null;
+    year: number | null;
+    inception: number | null;
+  }>({ today: null, month: null, year: null, inception: null });
 
   async function loadAll() {
+    // Supabase caps a single query's rows (default 1000) regardless of any
+    // date filter. With a tick every ~10s, "last 60 days" can silently be
+    // capped at the OLDEST rows in that window rather than the newest — so
+    // we fetch a bounded recent slice here (enough for the chart's longest
+    // view) and get each stat's reference point separately below, via its
+    // own tiny single-row query. That keeps every stat correct regardless
+    // of how much history has piled up.
     const [{ data: pos }, { data: nav }] = await Promise.all([
       supabase.from("portfolio_positions").select("*").order("created_at", { ascending: false }),
-              supabase
-          .from("nav_history")
-          .select("ts, nav")
-          .gte("ts", new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString())
-          .order("ts", { ascending: true }),
+      supabase.from("nav_history").select("ts, nav").order("ts", { ascending: false }).limit(8000),
     ]);
     setPositions((pos as Position[]) || []);
-        setNavHistory((nav as NavPoint[]) || []);
+    setNavHistory(((nav as NavPoint[]) || []).slice().reverse());
   }
 
-  useEffect(() => {
+  async function loadReferenceNavs() {
+    async function firstNavAtOrAfter(cutoff: Date | null) {
+      let q = supabase.from("nav_history").select("nav").order("ts", { ascending: true }).limit(1);
+      if (cutoff) q = q.gte("ts", cutoff.toISOString());
+      const { data } = await q.maybeSingle();
+      return data?.nav ?? null;
+    }
+    const [today, month, year, inception] = await Promise.all([
+      firstNavAtOrAfter(startOfDayStockholm()),
+      firstNavAtOrAfter(startOfMonth()),
+      firstNavAtOrAfter(startOfYear()),
+      firstNavAtOrAfter(null),
+    ]);
+    setRefNavs({ today, month, year, inception });
+  }
+EOF
+cat /mnt/user-data/outputs/loadAll-patch.txt
+Output
+
+  const [refNavs, setRefNavs] = useState<{
+    today: number | null;
+    month: number | null;
+    year: number | null;
+    inception: number | null;
+  }>({ today: null, month: null, year: null, inception: null });
+
+  async function loadAll() {
+    // Supabase caps a single query's rows (default 1000) regardless of any
+    // date filter. With a tick every ~10s, "last 60 days" can silently be
+    // capped at the OLDEST rows in that window rather than the newest — so
+    // we fetch a bounded recent slice here (enough for the chart's longest
+    // view) and get each stat's reference point separately below, via its
+    // own tiny single-row query. That keeps every stat correct regardless
+    // of how much history has piled up.
+    const [{ data: pos }, { data: nav }] = await Promise.all([
+      supabase.from("portfolio_positions").select("*").order("created_at", { ascending: false }),
+      supabase.from("nav_history").select("ts, nav").order("ts", { ascending: false }).limit(8000),
+    ]);
+    setPositions((pos as Position[]) || []);
+    setNavHistory(((nav as NavPoint[]) || []).slice().reverse());
+  }
+
+  async function loadReferenceNavs() {
+    async function firstNavAtOrAfter(cutoff: Date | null) {
+      let q = supabase.from("nav_history").select("nav").order("ts", { ascending: true }).limit(1);
+      if (cutoff) q = q.gte("ts", cutoff.toISOString());
+      const { data } = await q.maybeSingle();
+      return data?.nav ?? null;
+    }
+    const [today, month, year, inception] = await Promise.all([
+      firstNavAtOrAfter(startOfDayStockholm()),
+      firstNavAtOrAfter(startOfMonth()),
+      firstNavAtOrAfter(startOfYear()),
+      firstNavAtOrAfter(null),
+    ]);
+    setRefNavs({ today, month, year, inception });
+  }
+
+    useEffect(() => {
     loadAll();
+    loadReferenceNavs();
     const channel = supabase
       .channel("portfolio-live")
       .on("postgres_changes", { event: "*", schema: "public", table: "portfolio_positions" }, loadAll)
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "nav_history" }, loadAll)
-      .subscribe();
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "nav_history" }, () => {
+        loadAll();
+        loadReferenceNavs();
+      })
     return () => {
       supabase.removeChannel(channel);
     };
