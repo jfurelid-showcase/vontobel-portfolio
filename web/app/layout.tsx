@@ -1,7 +1,7 @@
 import "./globals.css";
 
 export const metadata = {
-  title: "Vontobel Portfolio",
+  title: "Portfolio Tracker",
   description: "Live Vontobel ETP portfolio tracker",
 };
 
