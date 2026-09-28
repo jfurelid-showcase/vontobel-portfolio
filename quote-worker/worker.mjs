@@ -103,45 +103,50 @@ async function fetchLivePrice(insref) {
 }
 
 async function tick() {
-  const { data: openPositions, error } = await supabase
+  const { data: openPositionsRaw, error } = await supabase
     .from("portfolio_positions")
     .select("id, isin, entry_price, stake_sek, current_price")
     .eq("status", "open");
   if (error) throw error;
-
-  if (!openPositions || openPositions.length === 0) {
-    console.log("No open positions — nothing to refresh.");
-    return;
-  }
-
-  await ensureBrowser();
-
-  const isins = [...new Set(openPositions.map((p) => p.isin))];
-  const { data: certs, error: certErr } = await supabase
-    .from("certificates_full")
-    .select("isin, insref")
-    .in("isin", isins);
-  if (certErr) throw certErr;
-  const insrefByIsin = new Map(certs.map((c) => [c.isin, c.insref]));
+  const openPositions = openPositionsRaw || [];
 
   const now = new Date().toISOString();
   const priceByIsin = new Map();
 
-  await Promise.all(
-    isins.map(async (isin) => {
-      const insref = insrefByIsin.get(isin);
-      if (!insref) {
-        console.warn(`No insref found in certificates_full for ${isin} — skipping this tick.`);
-        return;
-      }
-      try {
-        const price = await fetchLivePrice(insref);
-        if (price != null) priceByIsin.set(isin, price);
-      } catch (e) {
-        console.warn(`Price fetch failed for ${isin} (insref ${insref}): ${e.message}`);
-      }
-    })
-  );
+  if (openPositions.length === 0) {
+    // No open positions to fetch live prices for, but we still record a NAV
+    // point below from closed trades. Without this, closing your last open
+    // position (or reopening/editing/deleting one while none are open)
+    // would silently stop updating NAV until a new position is opened,
+    // since there'd be nothing left to trigger a tick that writes one.
+    console.log("No open positions — recording NAV from closed trades only.");
+  } else {
+    await ensureBrowser();
+
+    const isins = [...new Set(openPositions.map((p) => p.isin))];
+    const { data: certs, error: certErr } = await supabase
+      .from("certificates_full")
+      .select("isin, insref")
+      .in("isin", isins);
+    if (certErr) throw certErr;
+    const insrefByIsin = new Map(certs.map((c) => [c.isin, c.insref]));
+
+    await Promise.all(
+      isins.map(async (isin) => {
+        const insref = insrefByIsin.get(isin);
+        if (!insref) {
+          console.warn(`No insref found in certificates_full for ${isin} — skipping this tick.`);
+          return;
+        }
+        try {
+          const price = await fetchLivePrice(insref);
+          if (price != null) priceByIsin.set(isin, price);
+        } catch (e) {
+          console.warn(`Price fetch failed for ${isin} (insref ${insref}): ${e.message}`);
+        }
+      })
+    );
+  }
 
   // NAV is now pinned to a fixed capital base (portfolio_settings.cash_sek,
   // e.g. 100000 SEK = NAV 100) instead of a weighted-return index. This way
@@ -182,7 +187,9 @@ async function tick() {
   const nav = 100 + (100 * totalPl) / baseCapital;
 
   await supabase.from("nav_history").insert({ ts: now, nav });
-  console.log(`Tick ${now}: ${priceByIsin.size}/${isins.length} prices updated, P/L=${totalPl.toFixed(0)} SEK, NAV=${nav.toFixed(2)}`);
+  console.log(
+    `Tick ${now}: ${priceByIsin.size}/${openPositions.length} prices updated (${openPositions.length} open), P/L=${totalPl.toFixed(0)} SEK, NAV=${nav.toFixed(2)}`
+  );
 }
 
 let marketWasOpen = null;
