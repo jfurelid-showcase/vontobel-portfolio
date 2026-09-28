@@ -10,6 +10,7 @@ import TraderBadge from "@/components/TraderBadge";
 import TraderSettings from "@/components/TraderSettings";
 import TradeLog from "@/components/TradeLog";
 import PortfolioLifecycle from "@/components/PortfolioLifecycle";
+import ShareButton from "@/components/ShareButton";
 type Position = Parameters<typeof PositionCard>[0]["p"] & {
   stake_sek: number;
   quantity: number | null;
@@ -39,36 +40,63 @@ type Cert = {
 
 export default function Home() {
   const [tab, setTab] = useState<"dashboard" | "trades" | "admin">("dashboard");
+  // Set once, synchronously, from the URL before first paint — an embedded
+  // iframe (?tab=trades&embed=1) must never flash the Admin/full chrome
+  // before settling on the right view.
+  const [embed, setEmbed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return new URLSearchParams(window.location.search).get("embed") === "1";
+  });
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const t = params.get("tab");
+    const isEmbed = params.get("embed") === "1";
+    setEmbed(isEmbed);
+    // Admin is never allowed inside an embed, even if the URL is hand-edited
+    // — it has destructive, unauthenticated actions that must not be one
+    // click away in someone else's page.
+    if (t === "trades" || (t === "admin" && !isEmbed)) setTab(t);
+  }, []);
+
+  const content = tab === "dashboard" ? <Dashboard /> : tab === "trades" ? <TradeLog /> : <Admin />;
+
+  if (embed) {
+    return <main className="mx-auto max-w-5xl px-4 py-4 text-neutral-100">{content}</main>;
+  }
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-10 text-neutral-100">
-      <div className="mb-8 flex items-center justify-between">
+      <div className="mb-8 flex items-center justify-between gap-3">
         <div className="flex items-baseline gap-2.5">
           <img src="/vontobel-logo.png" alt="Vontobel" className="h-4 w-auto translate-y-[1px] opacity-60" />
           <span className="text-lg font-medium leading-none text-neutral-300">Portfolio</span>
         </div>
-        <div className="flex gap-1 rounded-lg border border-neutral-800 bg-neutral-900 p-1">
-          {(
-            [
-              ["dashboard", "Dashboard"],
-              ["trades", "Trades"],
-              ["admin", "Admin"],
-            ] as const
-          ).map(([key, label]) => (
-            <button
-              key={key}
-              onClick={() => setTab(key)}
-              className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${
-                tab === key ? "bg-neutral-100 text-neutral-900" : "text-neutral-400 hover:text-neutral-100"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
+        <div className="flex items-center gap-2">
+          <div className="flex gap-1 rounded-lg border border-neutral-800 bg-neutral-900 p-1">
+            {(
+              [
+                ["dashboard", "Dashboard"],
+                ["trades", "Trades"],
+                ["admin", "Admin"],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setTab(key)}
+                className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${
+                  tab === key ? "bg-neutral-100 text-neutral-900" : "text-neutral-400 hover:text-neutral-100"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <ShareButton />
         </div>
       </div>
 
-      {tab === "dashboard" ? <Dashboard /> : tab === "trades" ? <TradeLog /> : <Admin />}
+      {content}
     </main>
   );
 }
