@@ -31,6 +31,34 @@ import ws from "ws";
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const REFRESH_INTERVAL_MS = Number(process.env.REFRESH_INTERVAL_MS || 10000);
+
+// Only fetch during trading hours: Mon–Fri 08:00–22:15 (Europe/Stockholm, DST
+// handled automatically). Outside that window the worker idles — no price
+// fetches, no nav_history rows — and closes its browser to save memory.
+// Change the two numbers below to adjust the window. Set ALWAYS_ON=true to
+// bypass the schedule entirely (handy for testing).
+const MARKET_OPEN_MIN = 8 * 60; // 08:00
+const MARKET_CLOSE_MIN = 22 * 60 + 15; // 22:15 (the 22:15 minute still ticks, giving a closing NAV)
+const CLOSED_CHECK_MS = 30000;
+const ALWAYS_ON = process.env.ALWAYS_ON === "true";
+const hhmm = (m) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+const HOURS_LABEL = `Mon–Fri ${hhmm(MARKET_OPEN_MIN)}–${hhmm(MARKET_CLOSE_MIN)} Stockholm time`;
+
+function isMarketOpen(d = new Date()) {
+  if (ALWAYS_ON) return true;
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Stockholm",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(d);
+  const get = (t) => parts.find((p) => p.type === t).value;
+  const weekday = get("weekday"); // Mon, Tue, ...
+  if (weekday === "Sat" || weekday === "Sun") return false;
+  const minutes = Number(get("hour")) * 60 + Number(get("minute"));
+  return minutes >= MARKET_OPEN_MIN && minutes <= MARKET_CLOSE_MIN;
+}
 const SITE_URL = "https://www.ngm.se/market/etp?issuers=vontobel&page=1";
 const INSTRUMENT_API = (insref) => `https://ngm-api-prod.vmate.se/instrument/${insref}`;
 
@@ -157,7 +185,26 @@ async function tick() {
   console.log(`Tick ${now}: ${priceByIsin.size}/${isins.length} prices updated, P/L=${totalPl.toFixed(0)} SEK, NAV=${nav.toFixed(2)}`);
 }
 
+let marketWasOpen = null;
+
 async function loop() {
+  if (!isMarketOpen()) {
+    if (marketWasOpen !== false) {
+      console.log(`Outside trading hours (${HOURS_LABEL}) — idling.`);
+      marketWasOpen = false;
+      try {
+        await browser?.close();
+      } catch {}
+      browser = null;
+      apiContext = null;
+    }
+    setTimeout(loop, CLOSED_CHECK_MS);
+    return;
+  }
+  if (marketWasOpen !== true) {
+    console.log("Trading hours — starting price refresh.");
+    marketWasOpen = true;
+  }
   try {
     await tick();
   } catch (err) {
@@ -172,5 +219,5 @@ async function loop() {
   }
 }
 
-console.log(`Starting quote worker, refreshing every ${REFRESH_INTERVAL_MS}ms.`);
+console.log(`Starting quote worker, refreshing every ${REFRESH_INTERVAL_MS}ms during trading hours (${ALWAYS_ON ? "ALWAYS_ON" : HOURS_LABEL}).`);
 loop();
