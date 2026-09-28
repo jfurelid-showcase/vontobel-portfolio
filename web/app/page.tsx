@@ -8,6 +8,8 @@ import TradeNote from "@/components/TradeNote";
 import NavChart from "@/components/NavChart";
 import TraderBadge from "@/components/TraderBadge";
 import TraderSettings from "@/components/TraderSettings";
+import TradeLog from "@/components/TradeLog";
+import PortfolioLifecycle from "@/components/PortfolioLifecycle";
 type Position = Parameters<typeof PositionCard>[0]["p"] & {
   stake_sek: number;
   quantity: number | null;
@@ -36,7 +38,7 @@ type Cert = {
 // ---------------------------------------------------------------------------
 
 export default function Home() {
-  const [tab, setTab] = useState<"dashboard" | "admin">("dashboard");
+  const [tab, setTab] = useState<"dashboard" | "trades" | "admin">("dashboard");
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-10 text-neutral-100">
@@ -45,27 +47,28 @@ export default function Home() {
           <img src="/vontobel-logo.png" alt="Vontobel" className="h-4 w-auto translate-y-[1px] opacity-60" />
           <span className="text-lg font-medium leading-none text-neutral-300">Portfolio</span>
         </div>
-        <div className="flex gap-2 rounded-lg border border-neutral-800 bg-neutral-900 p-1">
-          <button
-            onClick={() => setTab("dashboard")}
-            className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${
-              tab === "dashboard" ? "bg-neutral-100 text-neutral-900" : "text-neutral-400 hover:text-neutral-100"
-            }`}
-          >
-            Dashboard
-          </button>
-          <button
-            onClick={() => setTab("admin")}
-            className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${
-              tab === "admin" ? "bg-neutral-100 text-neutral-900" : "text-neutral-400 hover:text-neutral-100"
-            }`}
-          >
-            Admin
-          </button>
+        <div className="flex gap-1 rounded-lg border border-neutral-800 bg-neutral-900 p-1">
+          {(
+            [
+              ["dashboard", "Dashboard"],
+              ["trades", "Trades"],
+              ["admin", "Admin"],
+            ] as const
+          ).map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setTab(key)}
+              className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${
+                tab === key ? "bg-neutral-100 text-neutral-900" : "text-neutral-400 hover:text-neutral-100"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
       </div>
 
-      {tab === "dashboard" ? <Dashboard /> : <Admin />}
+      {tab === "dashboard" ? <Dashboard /> : tab === "trades" ? <TradeLog /> : <Admin />}
     </main>
   );
 }
@@ -79,6 +82,7 @@ function Dashboard() {
   const [navHistory, setNavHistory] = useState<NavPoint[]>([]);
   const [baseCapital, setBaseCapital] = useState<number | null>(null);
   const [startDate, setStartDate] = useState<string | null>(null);
+  const [portfolioName, setPortfolioName] = useState<string | null>(null);
 
   const [refNavs, setRefNavs] = useState<{
     today: number | null;
@@ -88,8 +92,11 @@ function Dashboard() {
   }>({ today: null, month: null, year: null, inception: null });
 
   useEffect(() => {
-    supabase.from("portfolio_settings").select("cash_sek").single()
-      .then(({ data }) => setBaseCapital(data?.cash_sek ?? null));
+    supabase.from("portfolio_settings").select("cash_sek, portfolio_name").single()
+      .then(({ data }) => {
+        setBaseCapital(data?.cash_sek ?? null);
+        setPortfolioName(data?.portfolio_name ?? null);
+      });
     supabase.from("nav_history").select("ts").order("ts", { ascending: true }).limit(1)
       .then(({ data }) => setStartDate(data?.[0]?.ts ?? null));
   }, []);
@@ -171,6 +178,11 @@ function Dashboard() {
       <div className="mb-4">
         <TraderBadge />
       </div>
+      {portfolioName && (
+        <div className="mb-4 text-sm text-neutral-500">
+          Portfolio: <span className="font-medium text-neutral-200">{portfolioName}</span>
+        </div>
+      )}
 
       <div className="mb-6">
         <section className="flex-1 space-y-4">
@@ -941,6 +953,8 @@ function Admin() {
           {positions.length === 0 && <p className="text-neutral-500">No positions yet.</p>}
         </div>
       </section>
+
+      <PortfolioLifecycle />
 
       <style jsx global>{`
         .input {
