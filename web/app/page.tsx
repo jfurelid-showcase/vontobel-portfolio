@@ -226,16 +226,14 @@ function Dashboard() {
             />
           </div>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <div>
-              <NavStat
-                label="Idag"
-                value={fmtPct(dailyPct)}
-                isPct
-                pctValue={dailyPct}
-                sub={sekDelta(dailyPct, baseCapital)}
-              />
-              <MarketStatus className="mt-2 px-1" />
-            </div>
+            <NavStat
+              label="Idag"
+              value={fmtPct(dailyPct)}
+              isPct
+              pctValue={dailyPct}
+              sub={sekDelta(dailyPct, baseCapital)}
+              extra={<MarketStatus className="mt-1.5" />}
+            />
             <NavStat
               label="Denna månad"
               value={fmtPct(monthlyPct)}
@@ -436,6 +434,7 @@ function NavStat({
   pctValue,
   sub,
   compact,
+  extra,
 }: {
   label: string;
   value: string;
@@ -443,6 +442,7 @@ function NavStat({
   pctValue?: number | null;
   sub?: string;
   compact?: boolean;
+  extra?: React.ReactNode;
 }) {
   const color = isPct ? (pctValue == null ? "text-neutral-100" : pctValue >= 0 ? "text-emerald-400" : "text-red-400") : "text-neutral-100";
   return (
@@ -452,6 +452,7 @@ function NavStat({
         {value}
       </div>
       {sub && <div className={`mt-0.5 truncate text-xs ${color}`}>{sub}</div>}
+      {extra}
     </div>
   );
 }
