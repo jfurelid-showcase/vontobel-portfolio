@@ -11,6 +11,7 @@ import TraderSettings from "@/components/TraderSettings";
 import TradeLog from "@/components/TradeLog";
 import PortfolioLifecycle from "@/components/PortfolioLifecycle";
 import ShareButton from "@/components/ShareButton";
+import MarketStatus from "@/components/MarketStatus";
 type Position = Parameters<typeof PositionCard>[0]["p"] & {
   stake_sek: number;
   quantity: number | null;
@@ -225,13 +226,16 @@ function Dashboard() {
             />
           </div>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <NavStat
-              label="Idag"
-              value={fmtPct(dailyPct)}
-              isPct
-              pctValue={dailyPct}
-              sub={sekDelta(dailyPct, baseCapital)}
-            />
+            <div>
+              <NavStat
+                label="Idag"
+                value={fmtPct(dailyPct)}
+                isPct
+                pctValue={dailyPct}
+                sub={sekDelta(dailyPct, baseCapital)}
+              />
+              <MarketStatus className="mt-2 px-1" />
+            </div>
             <NavStat
               label="Denna månad"
               value={fmtPct(monthlyPct)}
