@@ -328,12 +328,11 @@ function Dashboard() {
 function PositionListView({ items }: { items: Position[] }) {
   return (
     <div className="overflow-x-auto rounded-xl border border-neutral-800 bg-neutral-900">
-      <table className="w-full min-w-[960px] text-left text-sm">
+      <table className="w-full min-w-[820px] text-left text-sm">
         <thead className="bg-neutral-800/60 text-xs uppercase tracking-wide text-neutral-500">
           <tr>
             <th className="px-3 py-2">Namn</th>
             <th className="px-3 py-2">Underliggande</th>
-            <th className="px-3 py-2">Daglig %</th>
             <th className="px-3 py-2">Riktning</th>
             <th className="px-3 py-2">Antal</th>
             <th className="px-3 py-2">Ingång</th>
@@ -359,10 +358,6 @@ function PositionListView({ items }: { items: Position[] }) {
             // stake-based % return if quantity isn't set (older positions).
             const pl = p.quantity != null ? (price - p.entry_price) * p.quantity : p.stake_sek * (change / 100);
             const value = p.quantity != null ? price * p.quantity : null;
-            const dailyChange =
-              p.prev_close_price != null && price != null
-                ? ((price - p.prev_close_price) / p.prev_close_price) * 100
-                : null;
             return (
               <tr
                 key={p.id}
@@ -374,13 +369,6 @@ function PositionListView({ items }: { items: Position[] }) {
                   {p.name} <span className="text-xs text-neutral-500">({p.isin})</span>
                 </td>
                 <td className="px-3 py-2 text-neutral-300">{p.underlying ?? "–"}</td>
-                <td
-                  className={`px-3 py-2 ${
-                    dailyChange == null ? "" : dailyChange >= 0 ? "text-emerald-400" : "text-red-400"
-                  }`}
-                >
-                  {dailyChange != null ? `${dailyChange >= 0 ? "+" : ""}${dailyChange.toFixed(2)}%` : "–"}
-                </td>
                 <td className={`px-3 py-2 ${isLong ? "text-emerald-400" : isShort ? "text-red-400" : ""}`}>
                   {dirLabel(p.direction)}
                 </td>
