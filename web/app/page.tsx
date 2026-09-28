@@ -71,7 +71,7 @@ export default function Home() {
       <div className="mb-8 flex items-center justify-between gap-3">
         <div className="flex items-baseline gap-2.5">
           <img src="/vontobel-logo.png" alt="Vontobel" className="h-4 w-auto translate-y-[1px] opacity-60" />
-          <span className="text-lg font-medium leading-none text-neutral-300">Portfolio</span>
+          <span className="text-lg font-medium leading-none text-neutral-300">Portfolio Tracker</span>
         </div>
         <div className="flex items-center gap-2">
           <div className="flex gap-1 rounded-lg border border-neutral-800 bg-neutral-900 p-1">
