@@ -38,7 +38,7 @@ const REFRESH_INTERVAL_MS = Number(process.env.REFRESH_INTERVAL_MS || 10000);
 // Change the two numbers below to adjust the window. Set ALWAYS_ON=true to
 // bypass the schedule entirely (handy for testing).
 const MARKET_OPEN_MIN = 8 * 60; // 08:00
-const MARKET_CLOSE_MIN = 22 * 60 + 15; // 22:15 (the 22:15 minute still ticks, giving a closing NAV)
+const MARKET_CLOSE_MIN = 22 * 60; // 22:00 (the 22:00 minute still ticks, giving a closing NAV)
 const CLOSED_CHECK_MS = 30000;
 const ALWAYS_ON = process.env.ALWAYS_ON === "true";
 const hhmm = (m) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;

@@ -7,7 +7,7 @@ import { useEffect, useState } from "react";
 // change the worker's hours — this is a separate, purely client-side check
 // so the badge doesn't need a server round trip.
 const OPEN_MIN = 8 * 60; // 08:00
-const CLOSE_MIN = 22 * 60 + 15; // 22:15
+const CLOSE_MIN = 22 * 60; // 22:00
 
 function isMarketOpen(d: Date): boolean {
   const parts = new Intl.DateTimeFormat("en-GB", {
