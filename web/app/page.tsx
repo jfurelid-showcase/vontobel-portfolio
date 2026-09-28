@@ -213,6 +213,8 @@ function Dashboard() {
         </div>
       )}
 
+      <MarketStatus className="mb-3" />
+
       <div className="mb-6">
         <section className="flex-1 space-y-4">
           <div className="grid grid-cols-3 gap-4">
@@ -232,7 +234,6 @@ function Dashboard() {
               isPct
               pctValue={dailyPct}
               sub={sekDelta(dailyPct, baseCapital)}
-              extra={<MarketStatus className="mt-1.5" />}
             />
             <NavStat
               label="Denna månad"
