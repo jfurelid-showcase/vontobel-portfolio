@@ -10,9 +10,9 @@ type NavPoint = { ts: string; nav: number };
 //   MTD / YTD / All = one closing point per day
 const RANGES = [
   { label: "1D", key: "1D" },
-  { label: "MTD", key: "MTD" },
-  { label: "YTD", key: "YTD" },
-  { label: "All", key: "ALL" },
+  { label: "Månad", key: "MTD" },
+  { label: "År", key: "YTD" },
+  { label: "Allt", key: "ALL" },
 ] as const;
 
 type RangeLabel = (typeof RANGES)[number]["label"];
@@ -106,7 +106,7 @@ export default function NavChart(_props: { history?: NavPoint[] }) {
 
   const header = (
     <div className="mb-3 flex items-center justify-between">
-      <div className="text-sm text-neutral-400">Performance</div>
+      <div className="text-sm text-neutral-400">Utveckling</div>
       <div className="flex gap-1 rounded-lg border border-neutral-800 bg-neutral-950 p-1">
         {RANGES.map((r) => (
           <button
@@ -220,7 +220,7 @@ export default function NavChart(_props: { history?: NavPoint[] }) {
         {periodChange != null && (
           <div className={`mt-1 text-right text-xs ${isUp ? "text-emerald-400" : "text-red-400"}`}>
             {isUp ? "+" : ""}
-            {periodChange.toFixed(2)}% over period
+            {periodChange.toFixed(2)}% under perioden
           </div>
         )}
       </>
@@ -232,7 +232,7 @@ export default function NavChart(_props: { history?: NavPoint[] }) {
       {header}
       {chart ?? (
         <div className="flex h-48 items-center justify-center text-sm text-neutral-500">
-          {loading ? "Loading…" : "Not enough history yet for this range."}
+          {loading ? "Laddar…" : "Inte tillräckligt med historik för det här intervallet."}
         </div>
       )}
     </div>

@@ -31,6 +31,14 @@ function fmt2(n: number | null | undefined) {
   return n == null ? "–" : n.toFixed(2);
 }
 
+function dirLabel(d: string | null | undefined) {
+  if (!d) return "–";
+  const v = d.toLowerCase();
+  if (v === "long") return "Lång";
+  if (v === "short") return "Kort";
+  return d;
+}
+
 export default function PositionCard({ p }: { p: Position }) {
   const price = p.status === "closed" ? p.exit_price! : p.current_price ?? p.entry_price;
   const change = pct(p.entry_price, price);
@@ -48,8 +56,8 @@ export default function PositionCard({ p }: { p: Position }) {
         <div>
           <div className="font-semibold text-neutral-100">{p.name}</div>
           <div className="text-xs text-neutral-500">
-            {p.underlying} · {p.direction} {leverageOrType}
-            {p.quantity ? ` · ${p.quantity} contracts` : ""}
+            {p.underlying} · {dirLabel(p.direction)} {leverageOrType}
+            {p.quantity ? ` · ${p.quantity} kontrakt` : ""}
           </div>
         </div>
         <span
@@ -63,20 +71,20 @@ export default function PositionCard({ p }: { p: Position }) {
       </div>
 
       <div className="grid grid-cols-2 gap-y-3 text-sm">
-        <Stat label="Entry price" value={p.entry_price} />
+        <Stat label="Ingångspris" value={p.entry_price} />
         <Stat label="Stop loss" value={p.stop_loss} sub={toStop != null ? `${toStop.toFixed(2)}%` : undefined} />
-        <Stat label={p.status === "closed" ? "Exit price" : "Price"} value={price} />
+        <Stat label={p.status === "closed" ? "Utgångspris" : "Pris"} value={price} />
         <Stat
-          label="Target"
+          label="Mål"
           value={p.target_price}
           sub={toTarget != null ? `+${toTarget.toFixed(2)}%` : undefined}
         />
       </div>
 
       <div className="mt-3 text-xs text-neutral-500">
-        Entry {new Date(p.entry_time).toLocaleString("sv-SE")}
+        Ingång {new Date(p.entry_time).toLocaleString("sv-SE")}
         {p.current_updated_at && p.status === "open" && (
-          <> · updated {new Date(p.current_updated_at).toLocaleTimeString("sv-SE")}</>
+          <> · uppdaterad {new Date(p.current_updated_at).toLocaleTimeString("sv-SE")}</>
         )}
       </div>
 

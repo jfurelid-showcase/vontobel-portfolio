@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
-const LEVEL_LABELS: Record<string, string> = { noob: "Noob", intermediate: "Intermediate", pro: "Pro" };
+const LEVEL_LABELS: Record<string, string> = { noob: "Nybörjare", intermediate: "Mellan", pro: "Proffs" };
 
 export default function TraderBadge() {
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
@@ -31,7 +31,7 @@ export default function TraderBadge() {
         {name && <div className="text-sm font-medium text-neutral-100">{name}</div>}
         {level && (
           <div className="text-xs text-neutral-500">
-            Experience level: <span className="text-neutral-300">{LEVEL_LABELS[level] || level}</span>
+            Erfarenhetsnivå: <span className="text-neutral-300">{LEVEL_LABELS[level] || level}</span>
           </div>
         )}
       </div>

@@ -39,7 +39,7 @@ const dayKey = (iso: string) => new Date(iso).toLocaleDateString("sv-SE", { time
 const timeOf = (iso: string) =>
   new Date(iso).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit", timeZone: TZ });
 const dayLabel = (key: string) =>
-  new Date(`${key}T12:00:00`).toLocaleDateString("en-GB", {
+  new Date(`${key}T12:00:00`).toLocaleDateString("sv-SE", {
     weekday: "short",
     day: "numeric",
     month: "short",
@@ -49,6 +49,13 @@ const dayLabel = (key: string) =>
 const sek = (n: number) => `${n >= 0 ? "+" : ""}${n.toLocaleString("sv-SE", { maximumFractionDigits: 0 })} SEK`;
 const pctStr = (n: number) => `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
 const tone = (n: number) => (n > 0 ? "text-emerald-400" : n < 0 ? "text-red-400" : "text-neutral-300");
+function dirLabel(d: string | null | undefined) {
+  if (!d) return "–";
+  const v = d.toLowerCase();
+  if (v === "long") return "Lång";
+  if (v === "short") return "Kort";
+  return d;
+}
 
 export default function TradeLog() {
   const [positions, setPositions] = useState<Position[]>([]);
@@ -139,38 +146,38 @@ export default function TradeLog() {
     <>
       <section className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
         <SummaryCard
-          label="Realized P/L (closed)"
+          label="Realiserat P/L (stängda)"
           value={sek(summary.realized)}
           valueClass={tone(summary.realized)}
           sub={
             summary.closedCount > 0
-              ? `${summary.closedCount} closed${summary.winRate != null ? ` · ${summary.winRate.toFixed(0)}% winners` : ""}`
-              : "No closed trades yet"
+              ? `${summary.closedCount} stängda${summary.winRate != null ? ` · ${summary.winRate.toFixed(0)}% vinnare` : ""}`
+              : "Inga stängda affärer än"
           }
         />
         <SummaryCard
-          label="Unrealized P/L (open)"
+          label="Orealiserat P/L (öppna)"
           value={sek(summary.unrealized)}
           valueClass={tone(summary.unrealized)}
-          sub={`${summary.openCount} open position${summary.openCount === 1 ? "" : "s"}`}
+          sub={`${summary.openCount} ${summary.openCount === 1 ? "öppen position" : "öppna positioner"}`}
         />
         <SummaryCard
-          label="Total P/L"
+          label="Totalt P/L"
           value={sek(summary.total)}
           valueClass={tone(summary.total)}
-          sub={totalPct != null ? `${pctStr(totalPct)} of start capital` : undefined}
+          sub={totalPct != null ? `${pctStr(totalPct)} av startkapitalet` : undefined}
         />
         <SummaryCard
-          label="Trades"
+          label="Affärer"
           value={String(summary.openCount + summary.closedCount)}
           valueClass="text-neutral-100"
-          sub={`${summary.openCount} open · ${summary.closedCount} closed`}
+          sub={`${summary.openCount} öppna · ${summary.closedCount} stängda`}
         />
       </section>
 
-      {loading && <p className="text-neutral-500">Loading…</p>}
+      {loading && <p className="text-neutral-500">Laddar…</p>}
       {!loading && days.length === 0 && (
-        <p className="text-neutral-500">No trades yet — add a position from the Admin tab.</p>
+        <p className="text-neutral-500">Inga affärer än — lägg till en position under Admin-fliken.</p>
       )}
 
       <div className="space-y-4">
@@ -180,15 +187,15 @@ export default function TradeLog() {
               <div className="font-medium text-neutral-200">{dayLabel(d.day)}</div>
               <div className="flex flex-wrap items-baseline gap-x-4 gap-y-0.5 text-xs text-neutral-500">
                 <span>
-                  {d.opened} opened · {d.closed} closed
+                  {d.opened} öppnade · {d.closed} stängda
                 </span>
                 {d.closed > 0 && (
                   <span>
-                    Realized <span className={`font-medium ${tone(d.realized)}`}>{sek(d.realized)}</span>
+                    Realiserat <span className={`font-medium ${tone(d.realized)}`}>{sek(d.realized)}</span>
                   </span>
                 )}
                 <span>
-                  Cumulative realized <span className={tone(d.cumulative)}>{sek(d.cumulative)}</span>
+                  Ackumulerat realiserat <span className={tone(d.cumulative)}>{sek(d.cumulative)}</span>
                 </span>
               </div>
             </div>
@@ -230,7 +237,7 @@ function EventRow({ ev }: { ev: TradeEvent }) {
       <>
         <div className={`text-sm font-medium opacity-80 ${tone(pl)}`}>{sek(pl)}</div>
         <div className="text-[11px] text-neutral-500">
-          unrealized · {pctStr(change)}
+          orealiserat · {pctStr(change)}
         </div>
       </>
     );
@@ -244,13 +251,13 @@ function EventRow({ ev }: { ev: TradeEvent }) {
           kind === "open" ? "bg-sky-500/15 text-sky-300" : "bg-neutral-100/10 text-neutral-200"
         }`}
       >
-        {kind === "open" ? "OPEN" : "CLOSE"}
+        {kind === "open" ? "ÖPPNAD" : "STÄNGD"}
       </span>
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-medium text-neutral-100">{p.name}</div>
         <div className="truncate text-xs text-neutral-500">
           {p.underlying ? `${p.underlying} · ` : ""}
-          <span className={isLong ? "text-emerald-400" : isShort ? "text-red-400" : ""}>{p.direction ?? "–"}</span>
+          <span className={isLong ? "text-emerald-400" : isShort ? "text-red-400" : ""}>{dirLabel(p.direction)}</span>
           {leverage ? ` ${leverage}` : ""}
           {p.quantity != null ? ` · ${p.quantity} @ ${price.toFixed(2)}` : ` · @ ${price.toFixed(2)}`}
         </div>

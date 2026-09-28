@@ -208,7 +208,7 @@ function Dashboard() {
       </div>
       {portfolioName && (
         <div className="mb-4 text-sm text-neutral-500">
-          Portfolio: <span className="font-medium text-neutral-200">{portfolioName}</span>
+          Portfölj: <span className="font-medium text-neutral-200">{portfolioName}</span>
         </div>
       )}
 
@@ -226,28 +226,28 @@ function Dashboard() {
           </div>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
             <NavStat
-              label="Today"
+              label="Idag"
               value={fmtPct(dailyPct)}
               isPct
               pctValue={dailyPct}
               sub={sekDelta(dailyPct, baseCapital)}
             />
             <NavStat
-              label="This month"
+              label="Denna månad"
               value={fmtPct(monthlyPct)}
               isPct
               pctValue={monthlyPct}
               sub={sekDelta(monthlyPct, baseCapital)}
             />
             <NavStat
-              label="YTD"
+              label="I år"
               value={fmtPct(ytdPct)}
               isPct
               pctValue={ytdPct}
               sub={sekDelta(ytdPct, baseCapital)}
             />
             <NavStat
-              label="Since inception"
+              label="Sedan start"
               value={fmtPct(inceptionPct)}
               isPct
               pctValue={inceptionPct}
@@ -263,15 +263,20 @@ function Dashboard() {
 
       <div className="mb-3 flex justify-end gap-2">
         <div className="flex gap-1 rounded-lg border border-neutral-800 bg-neutral-900 p-1">
-          {(["cards", "list"] as const).map((v) => (
+          {(
+            [
+              ["cards", "Kort"],
+              ["list", "Lista"],
+            ] as const
+          ).map(([v, label]) => (
             <button
               key={v}
               onClick={() => setView(v)}
-              className={`rounded-md px-3 py-1 text-xs font-medium capitalize transition ${
+              className={`rounded-md px-3 py-1 text-xs font-medium transition ${
                 view === v ? "bg-neutral-100 text-neutral-900" : "text-neutral-400 hover:text-neutral-100"
               }`}
             >
-              {v}
+              {label}
             </button>
           ))}
         </div>
@@ -279,15 +284,15 @@ function Dashboard() {
 
       <section className="mb-10">
         <div className="mb-3 flex items-baseline gap-3">
-          <h2 className="text-lg font-medium text-neutral-300">Open positions ({open.length})</h2>
+          <h2 className="text-lg font-medium text-neutral-300">Öppna positioner ({open.length})</h2>
           {open.length > 0 && (
             <span className={`text-sm font-medium ${totalOpenPl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
               {totalOpenPl >= 0 ? "+" : ""}
-              {totalOpenPl.toLocaleString("sv-SE", { maximumFractionDigits: 0 })} SEK open P/L
+              {totalOpenPl.toLocaleString("sv-SE", { maximumFractionDigits: 0 })} SEK öppet P/L
             </span>
           )}
         </div>
-        {open.length === 0 && <p className="text-neutral-500">No open positions yet — add one from the Admin tab.</p>}
+        {open.length === 0 && <p className="text-neutral-500">Inga öppna positioner än — lägg till en under Admin-fliken.</p>}
         {open.length > 0 && view === "cards" && (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             {open.map((p) => (
@@ -301,7 +306,7 @@ function Dashboard() {
       {closedAll.length > 0 && (
         <section>
           <h2 className="mb-3 text-lg font-medium text-neutral-300">
-            Recently closed ({closed.length}{closedAll.length > closed.length ? ` of ${closedAll.length}` : ""})
+            Nyligen stängda ({closed.length}{closedAll.length > closed.length ? ` av ${closedAll.length}` : ""})
           </h2>
           {view === "cards" && (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -323,19 +328,19 @@ function PositionListView({ items }: { items: Position[] }) {
       <table className="w-full min-w-[960px] text-left text-sm">
         <thead className="bg-neutral-800/60 text-xs uppercase tracking-wide text-neutral-500">
           <tr>
-            <th className="px-3 py-2">Name</th>
-            <th className="px-3 py-2">Underlying</th>
-            <th className="px-3 py-2">Daily %</th>
-            <th className="px-3 py-2">Dir</th>
-            <th className="px-3 py-2">Qty</th>
-            <th className="px-3 py-2">Entry</th>
-            <th className="px-3 py-2">{items[0]?.status === "closed" ? "Exit" : "Now"}</th>
-            <th className="px-3 py-2">Value (SEK)</th>
-            <th className="px-3 py-2">Change</th>
+            <th className="px-3 py-2">Namn</th>
+            <th className="px-3 py-2">Underliggande</th>
+            <th className="px-3 py-2">Daglig %</th>
+            <th className="px-3 py-2">Riktning</th>
+            <th className="px-3 py-2">Antal</th>
+            <th className="px-3 py-2">Ingång</th>
+            <th className="px-3 py-2">{items[0]?.status === "closed" ? "Utgång" : "Nu"}</th>
+            <th className="px-3 py-2">Värde (SEK)</th>
+            <th className="px-3 py-2">Förändring</th>
             <th className="px-3 py-2">P/L (SEK)</th>
             <th className="px-3 py-2">Stop loss</th>
-            <th className="px-3 py-2">Target</th>
-            <th className="px-3 py-2">{items[0]?.status === "closed" ? "Closed" : "Updated"}</th>
+            <th className="px-3 py-2">Mål</th>
+            <th className="px-3 py-2">{items[0]?.status === "closed" ? "Stängd" : "Uppdaterad"}</th>
           </tr>
         </thead>
         <tbody>
@@ -374,7 +379,7 @@ function PositionListView({ items }: { items: Position[] }) {
                   {dailyChange != null ? `${dailyChange >= 0 ? "+" : ""}${dailyChange.toFixed(2)}%` : "–"}
                 </td>
                 <td className={`px-3 py-2 ${isLong ? "text-emerald-400" : isShort ? "text-red-400" : ""}`}>
-                  {p.direction ?? "–"}
+                  {dirLabel(p.direction)}
                 </td>
                 <td className="px-3 py-2">{p.quantity ?? "–"}</td>
                 <td className="px-3 py-2">{p.entry_price.toFixed(2)}</td>
@@ -407,6 +412,13 @@ function sekDelta(pct: number | null, baseCapital: number | null): string | unde
   if (pct == null || baseCapital == null) return undefined;
   const sek = (pct / 100) * baseCapital;
   return `${sek >= 0 ? "+" : ""}${sek.toLocaleString("sv-SE", { maximumFractionDigits: 0 })} SEK`;
+}
+function dirLabel(d: string | null | undefined) {
+  if (!d) return "–";
+  const v = d.toLowerCase();
+  if (v === "long") return "Lång";
+  if (v === "short") return "Kort";
+  return d;
 }
 function fmtPct(v: number | null) {
   if (v == null) return "–";
