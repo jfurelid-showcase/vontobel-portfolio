@@ -80,7 +80,7 @@ export default function ShareButton() {
       </button>
 
       {open && (
-        <div className="absolute right-0 z-20 mt-2 w-80 rounded-xl border border-neutral-800 bg-neutral-900 p-4 shadow-xl sm:w-96">
+        <div className="absolute left-0 z-20 mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-xl border border-neutral-800 bg-neutral-900 p-4 shadow-xl sm:left-auto sm:right-0 sm:w-96">
           <div className="mb-3 text-sm font-medium text-neutral-200">Share or embed</div>
 
           <div className="space-y-4">
