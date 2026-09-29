@@ -12,6 +12,7 @@ import TradeLog from "@/components/TradeLog";
 import PortfolioLifecycle from "@/components/PortfolioLifecycle";
 import ShareButton from "@/components/ShareButton";
 import MarketStatus from "@/components/MarketStatus";
+import TabMenu from "@/components/TabMenu";
 type Position = Parameters<typeof PositionCard>[0]["p"] & {
   stake_sek: number;
   quantity: number | null;
@@ -69,12 +70,12 @@ export default function Home() {
   return (
     <main className="mx-auto max-w-5xl px-4 py-10 text-neutral-100">
       <div className="mb-8 flex items-center justify-between gap-3">
-        <div className="flex items-baseline gap-2.5">
-          <img src="/vontobel-logo.png" alt="Vontobel" className="h-4 w-auto translate-y-[1px] opacity-60" />
-          <span className="text-lg font-medium leading-none text-neutral-300">Portfolio Tracker</span>
+        <div className="flex min-w-0 items-baseline gap-2.5">
+          <img src="/vontobel-logo.png" alt="Vontobel" className="h-4 w-auto shrink-0 translate-y-[1px] opacity-60" />
+          <span className="truncate text-lg font-medium leading-none text-neutral-300">Portfolio Tracker</span>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="flex gap-1 rounded-lg border border-neutral-800 bg-neutral-900 p-1">
+        <div className="flex shrink-0 items-center gap-2">
+          <div className="hidden gap-1 rounded-lg border border-neutral-800 bg-neutral-900 p-1 sm:flex">
             {(
               [
                 ["dashboard", "Dashboard"],
@@ -93,6 +94,7 @@ export default function Home() {
               </button>
             ))}
           </div>
+          <TabMenu tab={tab} setTab={setTab} />
           <ShareButton />
         </div>
       </div>
