@@ -30,19 +30,15 @@ export default function TabMenu({ tab, setTab }: { tab: TabKey; setTab: (t: TabK
     };
   }, [open]);
 
-  const current = TABS.find(([key]) => key === tab)?.[1] ?? "Dashboard";
-
-  // Only rendered on narrow screens — see sm:hidden below and the matching
-  // hidden sm:flex on the full pill-button group in page.tsx.
   return (
     <div ref={ref} className="relative sm:hidden">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-1.5 rounded-md border border-neutral-700 bg-neutral-900 px-2.5 py-1.5 text-sm font-medium text-neutral-200"
+        aria-label="Menu"
+        className="flex h-9 w-9 items-center justify-center rounded-md border border-neutral-700 bg-neutral-900 text-neutral-200"
       >
-        {current}
-        <svg width="10" height="6" viewBox="0 0 10 6" fill="none" className={open ? "rotate-180" : ""}>
-          <path d="M1 1l4 4 4-4" stroke="currentColor" strokeWidth="1.5" />
+        <svg width="16" height="12" viewBox="0 0 16 12" fill="none">
+          <path d="M0 1h16M0 6h16M0 11h16" stroke="currentColor" strokeWidth="1.5" />
         </svg>
       </button>
 
