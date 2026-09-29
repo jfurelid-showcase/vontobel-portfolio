@@ -69,32 +69,42 @@ export default function Home() {
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-10 text-neutral-100">
-      <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-baseline gap-2.5">
-          <img src="/vontobel-logo.png" alt="Vontobel" className="h-4 w-auto shrink-0 translate-y-[1px] opacity-60" />
-          <span className="text-lg font-medium leading-none text-neutral-300">Portfolio Tracker</span>
-        </div>
-        <div className="flex items-center justify-end gap-2">
-          <div className="hidden gap-1 rounded-lg border border-neutral-800 bg-neutral-900 p-1 sm:flex">
-            {(
-              [
-                ["dashboard", "Dashboard"],
-                ["trades", "Trades"],
-                ["admin", "Admin"],
-              ] as const
-            ).map(([key, label]) => (
-              <button
-                key={key}
-                onClick={() => setTab(key)}
-                className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${
-                  tab === key ? "bg-neutral-100 text-neutral-900" : "text-neutral-400 hover:text-neutral-100"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
+      <div className="mb-8">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-baseline gap-2.5">
+            <img src="/vontobel-logo.png" alt="Vontobel" className="h-4 w-auto shrink-0 translate-y-[1px] opacity-60" />
+            <span className="text-lg font-medium leading-none text-neutral-300">Portfolio Tracker</span>
           </div>
-          <TabMenu tab={tab} setTab={setTab} />
+          <div className="flex items-center gap-2">
+            <div className="hidden gap-1 rounded-lg border border-neutral-800 bg-neutral-900 p-1 sm:flex">
+              {(
+                [
+                  ["dashboard", "Dashboard"],
+                  ["trades", "Trades"],
+                  ["admin", "Admin"],
+                ] as const
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  onClick={() => setTab(key)}
+                  className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${
+                    tab === key ? "bg-neutral-100 text-neutral-900" : "text-neutral-400 hover:text-neutral-100"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <TabMenu tab={tab} setTab={setTab} />
+            {/* Desktop: Share sits in this same row. Mobile: it's hidden here
+                and shown instead on its own row below, so the hamburger can
+                share the header row with the title. */}
+            <div className="hidden sm:block">
+              <ShareButton />
+            </div>
+          </div>
+        </div>
+        <div className="mt-2 flex justify-end sm:hidden">
           <ShareButton />
         </div>
       </div>
