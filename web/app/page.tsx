@@ -69,12 +69,12 @@ export default function Home() {
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-10 text-neutral-100">
-      <div className="mb-8 flex items-center justify-between gap-3">
-        <div className="flex min-w-0 items-baseline gap-2.5">
+      <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-baseline gap-2.5">
           <img src="/vontobel-logo.png" alt="Vontobel" className="h-4 w-auto shrink-0 translate-y-[1px] opacity-60" />
-          <span className="truncate text-lg font-medium leading-none text-neutral-300">Portfolio Tracker</span>
+          <span className="text-lg font-medium leading-none text-neutral-300">Portfolio Tracker</span>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex items-center justify-end gap-2">
           <div className="hidden gap-1 rounded-lg border border-neutral-800 bg-neutral-900 p-1 sm:flex">
             {(
               [
