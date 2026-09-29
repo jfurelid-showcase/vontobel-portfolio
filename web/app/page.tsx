@@ -104,7 +104,7 @@ export default function Home() {
             </div>
           </div>
         </div>
-        <div className="mt-2 flex justify-end sm:hidden">
+        <div className="mt-2 flex justify-start sm:hidden">
           <ShareButton />
         </div>
       </div>
