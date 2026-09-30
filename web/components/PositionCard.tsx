@@ -71,9 +71,19 @@ function exportPositionCard(p: Position) {
   const SCALE = 2;
   const W = 520;
   const padOut = 22;
-  let h = 180; // header + stats grid baseline height
-  if (p.note || p.podcast_episode) h += 70;
-  const H = h;
+  // Compute the exact height needed by walking through the same layout
+  // increments used below when actually drawing — a static guess kept
+  // clipping the bottom of the card whenever there was a note/podcast line.
+  let hy = padOut; // top padding
+  hy += 24; // "Vontobel Portfolio" label
+  hy += 44; // name + ISIN block
+  hy += 28; // underlying/direction/qty line
+  hy += 42 * 2 + 8; // 2x2 stats grid
+  if (value != null) hy += 34; // Värde line
+  hy += 22; // entry/updated time line
+  if (p.note || p.podcast_episode) hy += 8 + 46; // gap + note box
+  hy += 16; // bottom breathing room
+  const H = hy;
 
   const canvas = document.createElement("canvas");
   canvas.width = W * SCALE;
@@ -183,6 +193,7 @@ function exportPositionCard(p: Position) {
   y += 22;
 
   if (p.note || p.podcast_episode) {
+    y += 8;
     ctx.fillStyle = "#2a2410";
     if (typeof ctx.roundRect === "function") {
       ctx.beginPath();
