@@ -10,6 +10,7 @@ type TradeEvent = {
   name: string;
   direction: string | null;
   price: number;
+  quantity: number | null;
   pl: number | null; // only set for "close"
 };
 
@@ -55,7 +56,7 @@ async function fetchSeries(key: string): Promise<NavPoint[]> {
 
 // `history` is accepted (and ignored) so existing <NavChart history={...} />
 // calls in page.tsx keep compiling — the chart now loads its own data.
-export default function NavChart(_props: { history?: NavPoint[] }) {
+export default function NavChart({ history: _history, portfolioName }: { history?: NavPoint[]; portfolioName?: string | null }) {
   const [range, setRange] = useState<RangeLabel>("1D");
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const [trades, setTrades] = useState<TradeEvent[]>([]);
@@ -145,14 +146,30 @@ export default function NavChart(_props: { history?: NavPoint[] }) {
         const events: TradeEvent[] = [];
         for (const p of data as any[]) {
           if (p.entry_time && stockholmDay(p.entry_time) === dayKey) {
-            events.push({ ts: p.entry_time, kind: "open", name: p.name, direction: p.direction, price: Number(p.entry_price), pl: null });
+            events.push({
+              ts: p.entry_time,
+              kind: "open",
+              name: p.name,
+              direction: p.direction,
+              price: Number(p.entry_price),
+              quantity: p.quantity != null ? Number(p.quantity) : null,
+              pl: null,
+            });
           }
           if (p.exit_time && stockholmDay(p.exit_time) === dayKey) {
             const pl =
               p.quantity != null
                 ? (p.exit_price - p.entry_price) * p.quantity
                 : p.stake_sek * ((p.exit_price - p.entry_price) / p.entry_price);
-            events.push({ ts: p.exit_time, kind: "close", name: p.name, direction: p.direction, price: Number(p.exit_price), pl });
+            events.push({
+              ts: p.exit_time,
+              kind: "close",
+              name: p.name,
+              direction: p.direction,
+              price: Number(p.exit_price),
+              quantity: p.quantity != null ? Number(p.quantity) : null,
+              pl,
+            });
           }
         }
         events.sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
@@ -188,7 +205,7 @@ export default function NavChart(_props: { history?: NavPoint[] }) {
     const hasMarkerRowNow = isDailyNow && trades.length > 0;
     const svgW = 800;
     const svgH = 220;
-    const padding = { top: 16, right: 12, bottom: hasMarkerRowNow ? 46 : 24, left: 52 };
+    const padding = { top: 16, right: 12, bottom: hasMarkerRowNow ? 40 : 24, left: 52 };
     const plotW = svgW - padding.left - padding.right;
     const plotH = svgH - padding.top - padding.bottom;
     const xx = (i: number) => padding.left + (i / (points.length - 1)) * plotW;
@@ -200,20 +217,12 @@ export default function NavChart(_props: { history?: NavPoint[] }) {
     const periodChange = first !== 0 ? ((last - first) / first) * 100 : 0;
     const overallColor = isUp ? "#34d399" : "#f87171";
 
-    // The chart itself can only show which minute a trade happened at (via
-    // the marker's position) — the rest of what hovering shows on screen
-    // (name, price, result) goes in a legend list below, numbered to match
-    // the markers, since a static image can't be hovered.
-    const dayTrades = isDailyNow ? trades : [];
-    const legendLineH = 15;
-    const legendH = dayTrades.length > 0 ? 10 + dayTrades.length * legendLineH + 6 : 0;
-
     const SCALE = 2; // export at 2x for a crisp image
     const outerPad = 20; // matches the card's own padding
     const headerH = 24;
     const footerH = 26;
     const cardW = svgW + outerPad * 2;
-    const cardH = svgH + outerPad * 2 + headerH + footerH + legendH;
+    const cardH = svgH + outerPad * 2 + headerH + footerH;
 
     const canvas = document.createElement("canvas");
     canvas.width = cardW * SCALE;
@@ -249,7 +258,11 @@ export default function NavChart(_props: { history?: NavPoint[] }) {
     ctx.font = "500 12px system-ui, sans-serif";
     ctx.textAlign = "left";
     const rangeLabel = RANGES.find((r) => r.label === range)?.label ?? range;
-    ctx.fillText(`Vontobel Portfolio · ${rangeLabel}`, originX, originY - 8);
+    ctx.fillText(
+      portfolioName ? `Vontobel Portfolio · ${portfolioName} · ${rangeLabel}` : `Vontobel Portfolio · ${rangeLabel}`,
+      originX,
+      originY - 8
+    );
 
     ctx.save();
     ctx.translate(originX, originY);
@@ -334,20 +347,20 @@ export default function NavChart(_props: { history?: NavPoint[] }) {
     ctx.font = "400 11px system-ui, sans-serif";
     xLabels.forEach(({ idx, label }) => {
       ctx.textAlign = idx === 0 ? "left" : idx === points.length - 1 ? "right" : "center";
-      ctx.fillText(label, xx(idx), hasMarkerRowNow ? svgH - 35 : svgH - 6 + 4);
+      ctx.fillText(label, xx(idx), hasMarkerRowNow ? svgH - 24 + 4 : svgH - 6 + 4);
     });
     ctx.textAlign = "left";
 
     if (isDailyNow && trades.length > 0) {
-      trades.forEach((t, i) => {
+      trades.forEach((t) => {
         const tTime = new Date(t.ts).getTime();
         let nearest = 0;
         let bestDiff = Infinity;
-        points.forEach((p, idx) => {
+        points.forEach((p, i) => {
           const diff = Math.abs(new Date(p.ts).getTime() - tTime);
           if (diff < bestDiff) {
             bestDiff = diff;
-            nearest = idx;
+            nearest = i;
           }
         });
         const mx = xx(nearest);
@@ -371,54 +384,10 @@ export default function NavChart(_props: { history?: NavPoint[] }) {
         ctx.closePath();
         ctx.fill();
         ctx.stroke();
-
-        // Small numbered tag above the marker, matching the legend list
-        // below — the chart can only show *when* a trade happened; the
-        // rest (name, price, result) lives in the legend since this is a
-        // static image, not hoverable like the on-screen chart.
-        ctx.fillStyle = "#a1a1aa";
-        ctx.font = "600 9px system-ui, sans-serif";
-        ctx.textAlign = "center";
-        ctx.fillText(String(i + 1), mx, my - size - 7);
-        ctx.textAlign = "left";
       });
     }
 
     ctx.restore();
-
-    if (dayTrades.length > 0) {
-      let ly = originY + svgH + 14;
-      dayTrades.forEach((t, i) => {
-        const timeLabel = new Date(t.ts).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Stockholm" });
-        const kindLabel = t.kind === "open" ? "Öppnad" : "Stängd";
-        const resultColor = t.kind === "open" ? "#38bdf8" : t.pl != null && t.pl >= 0 ? "#34d399" : "#f87171";
-        const name = t.name.length > 22 ? t.name.slice(0, 21) + "…" : t.name;
-
-        ctx.textAlign = "left";
-        ctx.font = "600 10px system-ui, sans-serif";
-        ctx.fillStyle = "#71717a";
-        ctx.fillText(`${i + 1}.`, originX, ly);
-
-        ctx.font = "400 10px system-ui, sans-serif";
-        ctx.fillStyle = "#a1a1aa";
-        ctx.fillText(`${timeLabel} ${kindLabel}`, originX + 16, ly);
-
-        ctx.fillStyle = "#e4e4e7";
-        ctx.fillText(name, originX + 96, ly);
-
-        ctx.fillStyle = "#a1a1aa";
-        ctx.fillText(`@ ${t.price.toFixed(2)}`, originX + 320, ly);
-
-        if (t.kind === "close" && t.pl != null) {
-          ctx.textAlign = "right";
-          ctx.fillStyle = resultColor;
-          ctx.font = "600 10px system-ui, sans-serif";
-          ctx.fillText(`${t.pl >= 0 ? "+" : ""}${t.pl.toLocaleString("sv-SE", { maximumFractionDigits: 0 })} SEK`, originX + svgW, ly);
-          ctx.textAlign = "left";
-        }
-        ly += legendLineH;
-      });
-    }
 
     ctx.fillStyle = isUp ? "#34d399" : "#f87171";
     ctx.font = "600 13px system-ui, sans-serif";
@@ -778,7 +747,7 @@ export default function NavChart(_props: { history?: NavPoint[] }) {
               });
               const kindLabel = t.kind === "open" ? "ÖPPNAD" : "STÄNGD";
               const color = t.kind === "open" ? "#38bdf8" : t.pl != null && t.pl >= 0 ? UP_COLOR : DOWN_COLOR;
-              const boxW = 150;
+              const boxW = 160;
               const boxH = t.kind === "close" ? 54 : 40;
               const boxX = Math.min(Math.max(t.mx - boxW / 2, padding.left), width - padding.right - boxW);
               const boxY = padding.top + plotH - boxH - 14;
@@ -792,7 +761,7 @@ export default function NavChart(_props: { history?: NavPoint[] }) {
                     {t.name.length > 20 ? t.name.slice(0, 19) + "…" : t.name}
                   </text>
                   <text x={boxX + boxW / 2} y={boxY + 41} textAnchor="middle" fontSize="10" fill="#a1a1aa">
-                    @ {t.price.toFixed(2)}
+                    {t.quantity != null ? `${t.quantity} @ ${t.price.toFixed(2)}` : `@ ${t.price.toFixed(2)}`}
                   </text>
                   {t.kind === "close" && t.pl != null && (
                     <text x={boxX + boxW / 2} y={boxY + 52} textAnchor="middle" fontSize="11" fontWeight={600} fill={color}>
