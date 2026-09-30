@@ -4,6 +4,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 type NavPoint = { ts: string; nav: number };
+type TradeEvent = {
+  ts: string;
+  kind: "open" | "close";
+  name: string;
+  direction: string | null;
+  price: number;
+  pl: number | null; // only set for "close"
+};
 
 // Data comes from the nav_series() database function (see nav_series.sql):
 //   1D  = every tick since Stockholm midnight (10-second resolution)
@@ -50,6 +58,8 @@ async function fetchSeries(key: string): Promise<NavPoint[]> {
 export default function NavChart(_props: { history?: NavPoint[] }) {
   const [range, setRange] = useState<RangeLabel>("1D");
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  const [trades, setTrades] = useState<TradeEvent[]>([]);
+  const [hoverTradeIdx, setHoverTradeIdx] = useState<number | null>(null);
   const [raw, setRaw] = useState<NavPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const lastTsRef = useRef<string | null>(null);
@@ -120,8 +130,191 @@ export default function NavChart(_props: { history?: NavPoint[] }) {
     return p.map((pt) => ({ ts: pt.ts, nav: (pt.nav / first) * 100 }));
   }, [raw]);
 
+  const dayKey = range === "1D" && points.length > 0 ? stockholmDay(points[0].ts) : null;
+  useEffect(() => {
+    if (!dayKey) {
+      setTrades([]);
+      return;
+    }
+    let cancelled = false;
+    supabase
+      .from("portfolio_positions")
+      .select("id, name, direction, entry_time, exit_time, entry_price, exit_price, quantity, stake_sek")
+      .then(({ data, error }) => {
+        if (cancelled || error || !data) return;
+        const events: TradeEvent[] = [];
+        for (const p of data as any[]) {
+          if (p.entry_time && stockholmDay(p.entry_time) === dayKey) {
+            events.push({ ts: p.entry_time, kind: "open", name: p.name, direction: p.direction, price: Number(p.entry_price), pl: null });
+          }
+          if (p.exit_time && stockholmDay(p.exit_time) === dayKey) {
+            const pl =
+              p.quantity != null
+                ? (p.exit_price - p.entry_price) * p.quantity
+                : p.stake_sek * ((p.exit_price - p.entry_price) / p.entry_price);
+            events.push({ ts: p.exit_time, kind: "close", name: p.name, direction: p.direction, price: Number(p.exit_price), pl });
+          }
+        }
+        events.sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
+        setTrades(events);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [dayKey]);
+
+  function buildShareCanvas(): HTMLCanvasElement | null {
+    if (points.length < 2) return null;
+    const isDailyNow = range === "1D";
+
+    const navValues = points.map((p) => p.nav);
+    const rawMin = Math.min(...navValues);
+    const rawMax = Math.max(...navValues);
+    const rawSpread = rawMax - rawMin || 0.02;
+    const step = rawSpread / 3 || 0.01;
+    const ticks: number[] = [];
+    for (let k = -60; k <= 60; k++) {
+      const v = 100 + k * step;
+      if (v >= rawMin - step && v <= rawMax + step) ticks.push(v);
+    }
+    if (ticks.length === 0) ticks.push(100);
+    const min = ticks[0] - step * 0.15;
+    const max = ticks[ticks.length - 1] + step * 0.15;
+    const spread = max - min || 1;
+
+    const first = points[0].nav;
+    const last = points[points.length - 1].nav;
+    const isUp = last >= first;
+    const periodChange = first !== 0 ? ((last - first) / first) * 100 : 0;
+    const overallColor = isUp ? "#34d399" : "#f87171";
+
+    const size = 1080;
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+
+    ctx.fillStyle = "#0a0a0a";
+    ctx.fillRect(0, 0, size, size);
+
+    ctx.fillStyle = "#a1a1aa";
+    ctx.font = "500 32px system-ui, sans-serif";
+    ctx.fillText("Vontobel Portfolio", 60, 90);
+
+    ctx.fillStyle = overallColor;
+    ctx.font = "700 76px system-ui, sans-serif";
+    ctx.fillText(`${periodChange >= 0 ? "+" : ""}${periodChange.toFixed(2)}%`, 60, 190);
+
+    ctx.fillStyle = "#71717a";
+    ctx.font = "400 26px system-ui, sans-serif";
+    const rangeLabel = RANGES.find((r) => r.label === range)?.label ?? range;
+    ctx.fillText(`${rangeLabel} · ${new Date().toLocaleDateString("sv-SE")}`, 60, 230);
+
+    const padL = 60,
+      padR = 60,
+      padT = 290,
+      padB = 140;
+    const plotW = size - padL - padR;
+    const plotH = size - padT - padB;
+    const xx = (i: number) => padL + (i / (points.length - 1)) * plotW;
+    const yy = (nav: number) => padT + plotH - ((nav - min) / spread) * plotH;
+
+    ctx.strokeStyle = "#3f3f46";
+    ctx.setLineDash([6, 6]);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(padL, yy(100));
+    ctx.lineTo(size - padR, yy(100));
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    if (isDailyNow) {
+      const linePixels = points.map((p, i) => ({ x: xx(i), nav: p.nav }));
+      let run: { x: number; nav: number }[] = [linePixels[0]];
+      let runUp = linePixels[0].nav >= 100;
+      const segs: { up: boolean; pts: { x: number; nav: number }[] }[] = [];
+      for (let i = 1; i < linePixels.length; i++) {
+        const prev = linePixels[i - 1];
+        const curr = linePixels[i];
+        const currUp = curr.nav >= 100;
+        if (currUp === runUp) {
+          run.push(curr);
+        } else {
+          const t = (100 - prev.nav) / (curr.nav - prev.nav);
+          const cross = { x: prev.x + t * (curr.x - prev.x), nav: 100 };
+          run.push(cross);
+          segs.push({ up: runUp, pts: run });
+          run = [cross, curr];
+          runUp = currUp;
+        }
+      }
+      segs.push({ up: runUp, pts: run });
+      for (const seg of segs) {
+        ctx.strokeStyle = seg.up ? "#34d399" : "#f87171";
+        ctx.lineWidth = 5;
+        ctx.beginPath();
+        seg.pts.forEach((p, j) => (j === 0 ? ctx.moveTo(p.x, yy(p.nav)) : ctx.lineTo(p.x, yy(p.nav))));
+        ctx.stroke();
+      }
+    } else {
+      ctx.strokeStyle = overallColor;
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      points.forEach((p, i) => (i === 0 ? ctx.moveTo(xx(i), yy(p.nav)) : ctx.lineTo(xx(i), yy(p.nav))));
+      ctx.stroke();
+    }
+
+    ctx.fillStyle = "#52525b";
+    ctx.font = "400 22px system-ui, sans-serif";
+    ctx.fillText("Delad från min portfölj", 60, size - 60);
+
+    return canvas;
+  }
+
+  async function handleShare() {
+    const canvas = buildShareCanvas();
+    if (!canvas) return;
+    canvas.toBlob(async (blob) => {
+      if (!blob) return;
+      const filename = `portfolio-${range === "1D" ? "dag" : range === "Månad" ? "manad" : range === "År" ? "ar" : "allt"}.png`;
+      const file = new File([blob], filename, { type: "image/png" });
+      const nav = window.navigator as Navigator & { canShare?: (data?: ShareData) => boolean };
+      if (nav.share && nav.canShare && nav.canShare({ files: [file] })) {
+        try {
+          await nav.share({ files: [file], title: "Vontobel Portfolio" });
+          return;
+        } catch {
+          // user cancelled the share sheet, or it failed — fall back to download
+        }
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }, "image/png");
+  }
+
   const header = (
-    <div className="mb-3 flex justify-end">
+    <div className="mb-3 flex justify-end gap-2">
+      <button
+        onClick={handleShare}
+        title="Dela graf som bild"
+        className="flex items-center gap-1 rounded-lg border border-neutral-800 bg-neutral-950 px-2.5 py-1 text-xs font-medium text-neutral-400 hover:text-neutral-100"
+      >
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+          <path
+            d="M18 8a3 3 0 1 0-2.83-4H15a3 3 0 0 0 .17 1L8.91 8.51a3 3 0 1 0 0 6.98L15.17 19a3 3 0 1 0 .7-1.94l-6.26-3.51a3 3 0 0 0 0-1.1l6.26-3.51A3 3 0 0 0 18 8Z"
+            stroke="currentColor"
+            strokeWidth="1.6"
+          />
+        </svg>
+        Dela
+      </button>
       <div className="flex gap-1 rounded-lg border border-neutral-800 bg-neutral-950 p-1">
         {RANGES.map((r) => (
           <button
@@ -256,6 +449,26 @@ export default function NavChart(_props: { history?: NavPoint[] }) {
       hover = { hx, hy, color, timeLabel, changePct };
     }
 
+    // Trade markers: only meaningful on the 1D view. Each event snaps to
+    // the x-position of the chart's nearest point in time (points are
+    // already downsampled, so this stays a small, readable set of marks
+    // rather than one per raw 10s tick).
+    const tradeMarkers = isDaily
+      ? trades.map((t) => {
+          const tTime = new Date(t.ts).getTime();
+          let nearest = 0;
+          let bestDiff = Infinity;
+          for (let i = 0; i < points.length; i++) {
+            const diff = Math.abs(new Date(points[i].ts).getTime() - tTime);
+            if (diff < bestDiff) {
+              bestDiff = diff;
+              nearest = i;
+            }
+          }
+          return { ...t, mx: x(nearest) };
+        })
+      : [];
+
     function handlePointer(clientX: number, target: SVGRectElement) {
       const rect = target.getBoundingClientRect();
       const frac = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
@@ -368,6 +581,67 @@ export default function NavChart(_props: { history?: NavPoint[] }) {
             </g>
           )}
 
+          {isDaily &&
+            tradeMarkers.map((t, i) => {
+              const my = padding.top + plotH + 7;
+              const isOpen = t.kind === "open";
+              const color = isOpen ? "#38bdf8" : t.pl != null && t.pl >= 0 ? UP_COLOR : DOWN_COLOR;
+              const size = 4;
+              const points_ = isOpen
+                ? `${t.mx - size},${my + size} ${t.mx + size},${my + size} ${t.mx},${my - size}` // up-triangle
+                : `${t.mx - size},${my - size} ${t.mx + size},${my - size} ${t.mx},${my + size}`; // down-triangle
+              return (
+                <g
+                  key={i}
+                  onMouseEnter={() => setHoverTradeIdx(i)}
+                  onMouseLeave={() => setHoverTradeIdx(null)}
+                  onTouchStart={() => setHoverTradeIdx(i)}
+                  style={{ cursor: "pointer" }}
+                >
+                  <circle cx={t.mx} cy={my} r="8" fill="transparent" />
+                  <polygon points={points_} fill={color} stroke="#171717" strokeWidth="1" />
+                </g>
+              );
+            })}
+
+          {isDaily &&
+            hoverTradeIdx != null &&
+            tradeMarkers[hoverTradeIdx] &&
+            (() => {
+              const t = tradeMarkers[hoverTradeIdx];
+              const timeLabel = new Date(t.ts).toLocaleTimeString("sv-SE", {
+                hour: "2-digit",
+                minute: "2-digit",
+                timeZone: "Europe/Stockholm",
+              });
+              const kindLabel = t.kind === "open" ? "ÖPPNAD" : "STÄNGD";
+              const color = t.kind === "open" ? "#38bdf8" : t.pl != null && t.pl >= 0 ? UP_COLOR : DOWN_COLOR;
+              const boxW = 150;
+              const boxH = t.kind === "close" ? 54 : 40;
+              const boxX = Math.min(Math.max(t.mx - boxW / 2, padding.left), width - padding.right - boxW);
+              const boxY = padding.top + plotH - boxH - 14;
+              return (
+                <g pointerEvents="none">
+                  <rect x={boxX} y={boxY} width={boxW} height={boxH} rx="6" fill="#171717" stroke="#3f3f46" />
+                  <text x={boxX + boxW / 2} y={boxY + 14} textAnchor="middle" fontSize="10" fill="#a1a1aa">
+                    {timeLabel} · {kindLabel}
+                  </text>
+                  <text x={boxX + boxW / 2} y={boxY + 28} textAnchor="middle" fontSize="11" fontWeight={600} fill="#e4e4e7">
+                    {t.name.length > 20 ? t.name.slice(0, 19) + "…" : t.name}
+                  </text>
+                  <text x={boxX + boxW / 2} y={boxY + 41} textAnchor="middle" fontSize="10" fill="#a1a1aa">
+                    @ {t.price.toFixed(2)}
+                  </text>
+                  {t.kind === "close" && t.pl != null && (
+                    <text x={boxX + boxW / 2} y={boxY + 52} textAnchor="middle" fontSize="11" fontWeight={600} fill={color}>
+                      {t.pl >= 0 ? "+" : ""}
+                      {t.pl.toLocaleString("sv-SE", { maximumFractionDigits: 0 })} SEK
+                    </text>
+                  )}
+                </g>
+              );
+            })()}
+
           <rect
             x={padding.left}
             y={padding.top}
@@ -390,7 +664,7 @@ export default function NavChart(_props: { history?: NavPoint[] }) {
         )}
       </>
     );
-  }, [points, range, hoverIdx]);
+  }, [points, range, hoverIdx, trades, hoverTradeIdx]);
 
   return (
     <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
