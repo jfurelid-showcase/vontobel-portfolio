@@ -274,7 +274,7 @@ function Dashboard() {
       </div>
 
       <div className="mb-6">
-        <NavChart history={navHistory} />
+        <NavChart history={navHistory} portfolioName={portfolioName} />
       </div>
 
       <div className="mb-3 flex justify-end gap-2">

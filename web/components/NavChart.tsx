@@ -205,7 +205,7 @@ export default function NavChart({ history: _history, portfolioName }: { history
     const hasMarkerRowNow = isDailyNow && trades.length > 0;
     const svgW = 800;
     const svgH = 220;
-    const padding = { top: 16, right: 12, bottom: hasMarkerRowNow ? 40 : 24, left: 52 };
+    const padding = { top: 16, right: 12, bottom: hasMarkerRowNow ? 46 : 24, left: 52 };
     const plotW = svgW - padding.left - padding.right;
     const plotH = svgH - padding.top - padding.bottom;
     const xx = (i: number) => padding.left + (i / (points.length - 1)) * plotW;
@@ -217,12 +217,20 @@ export default function NavChart({ history: _history, portfolioName }: { history
     const periodChange = first !== 0 ? ((last - first) / first) * 100 : 0;
     const overallColor = isUp ? "#34d399" : "#f87171";
 
+    // The chart can only show *when* a trade happened (the marker's
+    // position) — the rest of what the on-screen hover shows (name, price,
+    // value, result) goes in a numbered legend below, since a static image
+    // can't be hovered.
+    const dayTrades = isDailyNow ? trades : [];
+    const legendLineH = 15;
+    const legendH = dayTrades.length > 0 ? 10 + dayTrades.length * legendLineH + 6 : 0;
+
     const SCALE = 2; // export at 2x for a crisp image
     const outerPad = 20; // matches the card's own padding
     const headerH = 24;
     const footerH = 26;
     const cardW = svgW + outerPad * 2;
-    const cardH = svgH + outerPad * 2 + headerH + footerH;
+    const cardH = svgH + outerPad * 2 + headerH + footerH + legendH;
 
     const canvas = document.createElement("canvas");
     canvas.width = cardW * SCALE;
@@ -347,20 +355,20 @@ export default function NavChart({ history: _history, portfolioName }: { history
     ctx.font = "400 11px system-ui, sans-serif";
     xLabels.forEach(({ idx, label }) => {
       ctx.textAlign = idx === 0 ? "left" : idx === points.length - 1 ? "right" : "center";
-      ctx.fillText(label, xx(idx), hasMarkerRowNow ? svgH - 24 + 4 : svgH - 6 + 4);
+      ctx.fillText(label, xx(idx), hasMarkerRowNow ? svgH - 35 : svgH - 6 + 4);
     });
     ctx.textAlign = "left";
 
     if (isDailyNow && trades.length > 0) {
-      trades.forEach((t) => {
+      trades.forEach((t, i) => {
         const tTime = new Date(t.ts).getTime();
         let nearest = 0;
         let bestDiff = Infinity;
-        points.forEach((p, i) => {
+        points.forEach((p, idx) => {
           const diff = Math.abs(new Date(p.ts).getTime() - tTime);
           if (diff < bestDiff) {
             bestDiff = diff;
-            nearest = i;
+            nearest = idx;
           }
         });
         const mx = xx(nearest);
@@ -384,10 +392,56 @@ export default function NavChart({ history: _history, portfolioName }: { history
         ctx.closePath();
         ctx.fill();
         ctx.stroke();
+
+        ctx.fillStyle = "#a1a1aa";
+        ctx.font = "600 9px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(String(i + 1), mx, my - size - 7);
+        ctx.textAlign = "left";
       });
     }
 
     ctx.restore();
+
+    if (dayTrades.length > 0) {
+      let ly = originY + svgH + 14;
+      dayTrades.forEach((t, i) => {
+        const timeLabel = new Date(t.ts).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Stockholm" });
+        const kindLabel = t.kind === "open" ? "Öppnad" : "Stängd";
+        const resultColor = t.kind === "open" ? "#38bdf8" : t.pl != null && t.pl >= 0 ? "#34d399" : "#f87171";
+        const name = t.name.length > 20 ? t.name.slice(0, 19) + "…" : t.name;
+        const value = t.quantity != null ? t.quantity * t.price : null;
+
+        ctx.textAlign = "left";
+        ctx.font = "600 10px system-ui, sans-serif";
+        ctx.fillStyle = "#71717a";
+        ctx.fillText(`${i + 1}.`, originX, ly);
+
+        ctx.font = "400 10px system-ui, sans-serif";
+        ctx.fillStyle = "#a1a1aa";
+        ctx.fillText(`${timeLabel} ${kindLabel}`, originX + 16, ly);
+
+        ctx.fillStyle = "#e4e4e7";
+        ctx.fillText(name, originX + 96, ly);
+
+        ctx.fillStyle = "#a1a1aa";
+        const qtyPrice = t.quantity != null ? `${t.quantity} @ ${t.price.toFixed(2)}` : `@ ${t.price.toFixed(2)}`;
+        ctx.fillText(qtyPrice, originX + 290, ly);
+
+        if (value != null) {
+          ctx.fillText(`Värde ${value.toLocaleString("sv-SE", { maximumFractionDigits: 0 })} SEK`, originX + 420, ly);
+        }
+
+        if (t.kind === "close" && t.pl != null) {
+          ctx.textAlign = "right";
+          ctx.fillStyle = resultColor;
+          ctx.font = "600 10px system-ui, sans-serif";
+          ctx.fillText(`${t.pl >= 0 ? "+" : ""}${t.pl.toLocaleString("sv-SE", { maximumFractionDigits: 0 })} SEK`, originX + svgW, ly);
+          ctx.textAlign = "left";
+        }
+        ly += legendLineH;
+      });
+    }
 
     ctx.fillStyle = isUp ? "#34d399" : "#f87171";
     ctx.font = "600 13px system-ui, sans-serif";
