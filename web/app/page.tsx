@@ -13,6 +13,7 @@ import PortfolioLifecycle from "@/components/PortfolioLifecycle";
 import ShareButton from "@/components/ShareButton";
 import MarketStatus from "@/components/MarketStatus";
 import TabMenu from "@/components/TabMenu";
+import PositionsExportButton from "@/components/PositionsExport";
 type Position = Parameters<typeof PositionCard>[0]["p"] & {
   stake_sek: number;
   quantity: number | null;
@@ -277,6 +278,13 @@ function Dashboard() {
       </div>
 
       <div className="mb-3 flex justify-end gap-2">
+        <PositionsExportButton
+          open={open}
+          closed={closed}
+          closedAllCount={closedAll.length}
+          totalOpenPl={totalOpenPl}
+          portfolioName={portfolioName}
+        />
         <div className="flex gap-1 rounded-lg border border-neutral-800 bg-neutral-900 p-1">
           {(
             [
