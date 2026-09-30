@@ -49,6 +49,7 @@ async function fetchSeries(key: string): Promise<NavPoint[]> {
 // calls in page.tsx keep compiling — the chart now loads its own data.
 export default function NavChart(_props: { history?: NavPoint[] }) {
   const [range, setRange] = useState<RangeLabel>("1D");
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const [raw, setRaw] = useState<NavPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const lastTsRef = useRef<string | null>(null);
@@ -98,6 +99,7 @@ export default function NavChart(_props: { history?: NavPoint[] }) {
     // renders under the new range's color logic (e.g. the whole 1D line
     // flashing solid red right as you switch to Month, before Month's own
     // data has arrived).
+    setHoverIdx(null);
     fullLoad();
     const t = setInterval(key === "1D" ? pollNew : fullLoad, key === "1D" ? 10_000 : 30_000);
     return () => {
@@ -150,12 +152,22 @@ export default function NavChart(_props: { history?: NavPoint[] }) {
     const rawMin = Math.min(...navValues);
     const rawMax = Math.max(...navValues);
 
-    // Always fit the axis to the day's actual movement (plus a little
-    // padding), rather than forcing a minimum range — a flat day should
-    // fill the chart vertically, not sit squeezed into a thin fixed band.
-    const pad = (rawMax - rawMin) * 0.08 || 0.05;
-    const min = rawMin - pad;
-    const max = rawMax + pad;
+    // Ticks are exact multiples of a fixed step *from* 100 (so spacing is
+    // perfectly even and 100.00 always lands on one), sized to the day's
+    // actual raw movement. The chart's min/max are then taken from the
+    // ticks themselves — not padded independently — so the outermost
+    // gridline always sits right at the top/bottom of the chart instead of
+    // leaving empty space above or below it.
+    const rawSpread = rawMax - rawMin || 0.02;
+    const step = rawSpread / 3 || 0.01;
+    const yTicks: number[] = [];
+    for (let k = -60; k <= 60; k++) {
+      const v = 100 + k * step;
+      if (v >= rawMin - step && v <= rawMax + step) yTicks.push(v);
+    }
+    if (yTicks.length === 0) yTicks.push(100);
+    const min = yTicks[0] - step * 0.15;
+    const max = yTicks[yTicks.length - 1] + step * 0.15;
     const spread = max - min || 1;
 
     const x = (i: number) => padding.left + (i / (points.length - 1)) * plotW;
@@ -205,16 +217,6 @@ export default function NavChart(_props: { history?: NavPoint[] }) {
     const singleLinePath = points.map((p, i) => `${i === 0 ? "M" : "L"} ${x(i).toFixed(1)} ${y(p.nav).toFixed(1)}`).join(" ");
     const singleAreaPath = `${singleLinePath} L ${x(points.length - 1).toFixed(1)} ${padding.top + plotH} L ${x(0).toFixed(1)} ${padding.top + plotH} Z`;
 
-    // Ticks are exact multiples of a fixed step *from* 100, so spacing is
-    // perfectly even and 100.00 itself always lands on one of them, instead
-    // of generating evenly-spaced ticks first and then patching 100 in.
-    const step = spread / 4 || 0.01;
-    const yTicks: number[] = [];
-    for (let k = -4; k <= 4; k++) {
-      const v = 100 + k * step;
-      if (v >= min - 1e-9 && v <= max + 1e-9) yTicks.push(v);
-    }
-
     const fmtX = (iso: string) =>
       range === "1D"
         ? new Date(iso).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Stockholm" })
@@ -230,6 +232,36 @@ export default function NavChart(_props: { history?: NavPoint[] }) {
         seen.add(label);
         xTicks.push({ idx, label });
       }
+    }
+
+    // Hover tooltip: snaps to the nearest of the already-downsampled
+    // `points` (capped at MAX_DRAW_POINTS), so on a busy trading day this
+    // is naturally a manageable number of stops rather than every 10s tick.
+    const hoverPt = hoverIdx != null ? points[hoverIdx] : null;
+    let hover: { hx: number; hy: number; color: string; timeLabel: string; changePct: number } | null = null;
+    if (hoverPt) {
+      const hx = x(hoverIdx!);
+      const hy = y(hoverPt.nav);
+      const color = isDaily ? (hoverPt.nav >= 100 ? UP_COLOR : DOWN_COLOR) : overallColor;
+      const timeLabel =
+        range === "1D"
+          ? new Date(hoverPt.ts).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Stockholm" })
+          : new Date(hoverPt.ts).toLocaleDateString("sv-SE", {
+              day: "numeric",
+              month: "short",
+              year: "numeric",
+              timeZone: "Europe/Stockholm",
+            });
+      const changePct = hoverPt.nav - 100; // points are indexed to 100, so this *is* the % change since the period start
+      hover = { hx, hy, color, timeLabel, changePct };
+    }
+
+    function handlePointer(clientX: number, target: SVGRectElement) {
+      const rect = target.getBoundingClientRect();
+      const frac = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+      const svgX = frac * width;
+      const idx = Math.round(((svgX - padding.left) / plotW) * (points.length - 1));
+      setHoverIdx(Math.min(points.length - 1, Math.max(0, idx)));
     }
 
     return (
@@ -310,6 +342,45 @@ export default function NavChart(_props: { history?: NavPoint[] }) {
               {label}
             </text>
           ))}
+
+          {hover && (
+            <g>
+              <line x1={hover.hx} x2={hover.hx} y1={padding.top} y2={padding.top + plotH} stroke="#52525b" strokeWidth="1" strokeDasharray="3 3" />
+              <circle cx={hover.hx} cy={hover.hy} r="3.5" fill={hover.color} stroke="#171717" strokeWidth="1.5" />
+              {(() => {
+                const boxW = 108;
+                const boxH = 40;
+                const boxX = Math.min(Math.max(hover.hx - boxW / 2, padding.left), width - padding.right - boxW);
+                const boxY = hover.hy < padding.top + plotH / 2 ? hover.hy + 10 : hover.hy - boxH - 10;
+                return (
+                  <g pointerEvents="none">
+                    <rect x={boxX} y={boxY} width={boxW} height={boxH} rx="6" fill="#171717" stroke="#3f3f46" />
+                    <text x={boxX + boxW / 2} y={boxY + 15} textAnchor="middle" fontSize="10" fill="#a1a1aa">
+                      {hover.timeLabel}
+                    </text>
+                    <text x={boxX + boxW / 2} y={boxY + 29} textAnchor="middle" fontSize="12" fontWeight={600} fill={hover.color}>
+                      {hoverPt!.nav.toFixed(2)} ({hover.changePct >= 0 ? "+" : ""}
+                      {hover.changePct.toFixed(2)}%)
+                    </text>
+                  </g>
+                );
+              })()}
+            </g>
+          )}
+
+          <rect
+            x={padding.left}
+            y={padding.top}
+            width={plotW}
+            height={plotH}
+            fill="transparent"
+            onMouseMove={(e) => handlePointer(e.clientX, e.currentTarget)}
+            onMouseLeave={() => setHoverIdx(null)}
+            onTouchStart={(e) => handlePointer(e.touches[0].clientX, e.currentTarget)}
+            onTouchMove={(e) => handlePointer(e.touches[0].clientX, e.currentTarget)}
+            onTouchEnd={() => setHoverIdx(null)}
+            style={{ cursor: "crosshair" }}
+          />
         </svg>
         {periodChange != null && (
           <div className={`mt-1 text-right text-xs ${isUp ? "text-emerald-400" : "text-red-400"}`}>
@@ -319,7 +390,7 @@ export default function NavChart(_props: { history?: NavPoint[] }) {
         )}
       </>
     );
-  }, [points, range]);
+  }, [points, range, hoverIdx]);
 
   return (
     <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
