@@ -145,18 +145,32 @@ export default function NavChart(_props: { history?: NavPoint[] }) {
     const plotW = width - padding.left - padding.right;
     const plotH = height - padding.top - padding.bottom;
 
+    const isDaily = range === "1D";
     const navValues = points.map((p) => p.nav);
     const rawMin = Math.min(...navValues);
     const rawMax = Math.max(...navValues);
-    const pad = (rawMax - rawMin) * 0.08 || 0.05;
-    const min = rawMin - pad;
-    const max = rawMax + pad;
+
+    let min: number;
+    let max: number;
+    if (isDaily) {
+      // Always show at least ±1 percentage point around the 100 baseline
+      // (99.00–101.00), in 0.5-point steps. If the data actually moves
+      // further than that, the range grows in the same 0.5 steps (so a
+      // move to e.g. +1.2% shows 98.5–101.5, not a ragged in-between edge).
+      const dev = Math.max(Math.abs(rawMax - 100), Math.abs(100 - rawMin));
+      const roundedDev = Math.max(1, Math.ceil(dev / 0.5) * 0.5);
+      min = 100 - roundedDev;
+      max = 100 + roundedDev;
+    } else {
+      const pad = (rawMax - rawMin) * 0.08 || 0.05;
+      min = rawMin - pad;
+      max = rawMax + pad;
+    }
     const spread = max - min || 1;
 
     const x = (i: number) => padding.left + (i / (points.length - 1)) * plotW;
     const y = (nav: number) => padding.top + plotH - ((nav - min) / spread) * plotH;
 
-    const isDaily = range === "1D";
     const linePixels = points.map((p, i) => ({ x: x(i), nav: p.nav }));
 
     // Split the series into runs that are entirely at-or-above 100 or
