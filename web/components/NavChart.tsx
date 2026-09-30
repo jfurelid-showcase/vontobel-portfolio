@@ -102,7 +102,17 @@ export default function NavChart(_props: { history?: NavPoint[] }) {
     };
   }, [range]);
 
-  const points = useMemo(() => downsample(raw, MAX_DRAW_POINTS), [raw]);
+  const points = useMemo(() => {
+    const p = downsample(raw, MAX_DRAW_POINTS);
+    // Reset every range to start at 100, so 1D/Month/Year/All each show
+    // performance relative to their own starting point rather than the
+    // portfolio's absolute NAV (which only means "started at 100" for the
+    // very first day ever).
+    if (p.length === 0) return p;
+    const first = p[0].nav;
+    if (!first) return p;
+    return p.map((pt) => ({ ts: pt.ts, nav: (pt.nav / first) * 100 }));
+  }, [raw]);
 
   const header = (
     <div className="mb-3 flex items-center justify-between">
