@@ -58,6 +58,15 @@ async function fetchSeries(key: string): Promise<NavPoint[]> {
 // calls in page.tsx keep compiling — the chart now loads its own data.
 export default function NavChart({ history: _history, portfolioName }: { history?: NavPoint[]; portfolioName?: string | null }) {
   const [range, setRange] = useState<RangeLabel>("1D");
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 639px)");
+    setIsMobile(mq.matches);
+    const onChange = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const [trades, setTrades] = useState<TradeEvent[]>([]);
   const [hoverTradeIdx, setHoverTradeIdx] = useState<number | null>(null);
@@ -507,7 +516,7 @@ export default function NavChart({ history: _history, portfolioName }: { history
     if (points.length < 2) return null;
 
     const width = 800;
-    const height = 220;
+    const height = isMobile ? 320 : 220;
     const hasMarkerRow = range === "1D" && trades.length > 0;
     const padding = { top: 16, right: 12, bottom: hasMarkerRow ? 40 : 24, left: 52 };
     const plotW = width - padding.left - padding.right;
@@ -652,7 +661,7 @@ export default function NavChart({ history: _history, portfolioName }: { history
 
     return (
       <>
-        <svg viewBox={`0 0 ${width} ${height}`} className="h-60 w-full sm:h-auto" preserveAspectRatio="none">
+        <svg viewBox={`0 0 ${width} ${height}`} className="w-full" preserveAspectRatio="none">
           {!isDaily && (
             <defs>
               <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
@@ -770,6 +779,8 @@ export default function NavChart({ history: _history, portfolioName }: { history
                   onMouseEnter={() => setHoverTradeIdx(i)}
                   onMouseLeave={() => setHoverTradeIdx(null)}
                   onTouchStart={() => setHoverTradeIdx(i)}
+                  onTouchEnd={() => setHoverTradeIdx(null)}
+                  onTouchCancel={() => setHoverTradeIdx(null)}
                   style={{ cursor: "pointer" }}
                 >
                   {/* Thin guide line up to the curve, so it's clear which
@@ -851,6 +862,7 @@ export default function NavChart({ history: _history, portfolioName }: { history
             onTouchStart={(e) => handlePointer(e.touches[0].clientX, e.currentTarget)}
             onTouchMove={(e) => handlePointer(e.touches[0].clientX, e.currentTarget)}
             onTouchEnd={() => setHoverIdx(null)}
+            onTouchCancel={() => setHoverIdx(null)}
             style={{ cursor: "crosshair" }}
           />
         </svg>
@@ -862,7 +874,7 @@ export default function NavChart({ history: _history, portfolioName }: { history
         )}
       </>
     );
-  }, [points, range, hoverIdx, trades, hoverTradeIdx]);
+  }, [points, range, hoverIdx, trades, hoverTradeIdx, isMobile]);
 
   return (
     <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
