@@ -747,8 +747,9 @@ export default function NavChart({ history: _history, portfolioName }: { history
               });
               const kindLabel = t.kind === "open" ? "ÖPPNAD" : "STÄNGD";
               const color = t.kind === "open" ? "#38bdf8" : t.pl != null && t.pl >= 0 ? UP_COLOR : DOWN_COLOR;
+              const value = t.quantity != null ? t.quantity * t.price : null;
               const boxW = 160;
-              const boxH = t.kind === "close" ? 54 : 40;
+              const boxH = (t.kind === "close" ? 54 : 40) + (value != null ? 13 : 0);
               const boxX = Math.min(Math.max(t.mx - boxW / 2, padding.left), width - padding.right - boxW);
               const boxY = padding.top + plotH - boxH - 14;
               return (
@@ -763,8 +764,20 @@ export default function NavChart({ history: _history, portfolioName }: { history
                   <text x={boxX + boxW / 2} y={boxY + 41} textAnchor="middle" fontSize="10" fill="#a1a1aa">
                     {t.quantity != null ? `${t.quantity} @ ${t.price.toFixed(2)}` : `@ ${t.price.toFixed(2)}`}
                   </text>
+                  {value != null && (
+                    <text x={boxX + boxW / 2} y={boxY + 54} textAnchor="middle" fontSize="10" fill="#a1a1aa">
+                      Värde {value.toLocaleString("sv-SE", { maximumFractionDigits: 0 })} SEK
+                    </text>
+                  )}
                   {t.kind === "close" && t.pl != null && (
-                    <text x={boxX + boxW / 2} y={boxY + 52} textAnchor="middle" fontSize="11" fontWeight={600} fill={color}>
+                    <text
+                      x={boxX + boxW / 2}
+                      y={boxY + (value != null ? 65 : 52)}
+                      textAnchor="middle"
+                      fontSize="11"
+                      fontWeight={600}
+                      fill={color}
+                    >
                       {t.pl >= 0 ? "+" : ""}
                       {t.pl.toLocaleString("sv-SE", { maximumFractionDigits: 0 })} SEK
                     </text>
