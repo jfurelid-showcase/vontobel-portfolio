@@ -94,6 +94,10 @@ export default function NavChart(_props: { history?: NavPoint[] }) {
     }
 
     setLoading(true);
+    setRaw([]); // clear the previous range's data immediately, or it briefly
+    // renders under the new range's color logic (e.g. the whole 1D line
+    // flashing solid red right as you switch to Month, before Month's own
+    // data has arrived).
     fullLoad();
     const t = setInterval(key === "1D" ? pollNew : fullLoad, key === "1D" ? 10_000 : 30_000);
     return () => {
@@ -200,9 +204,10 @@ export default function NavChart(_props: { history?: NavPoint[] }) {
     // Ticks are exact multiples of a fixed step *from* 100, so spacing is
     // perfectly even and 100.00 itself always lands on one of them, instead
     // of generating evenly-spaced ticks first and then patching 100 in.
-    const step = spread / 4 || 0.01;
+    const step = isDaily ? 0.5 : spread / 4 || 0.01;
+    const kRange = isDaily ? 40 : 4; // 0.5 is a small fixed step, so daily needs more k's to cover the spread
     const yTicks: number[] = [];
-    for (let k = -4; k <= 4; k++) {
+    for (let k = -kRange; k <= kRange; k++) {
       const v = 100 + k * step;
       if (v >= min - 1e-9 && v <= max + 1e-9) yTicks.push(v);
     }
