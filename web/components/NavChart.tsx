@@ -150,22 +150,12 @@ export default function NavChart(_props: { history?: NavPoint[] }) {
     const rawMin = Math.min(...navValues);
     const rawMax = Math.max(...navValues);
 
-    let min: number;
-    let max: number;
-    if (isDaily) {
-      // Always show at least ±1 percentage point around the 100 baseline
-      // (99.00–101.00), in 0.5-point steps. If the data actually moves
-      // further than that, the range grows in the same 0.5 steps (so a
-      // move to e.g. +1.2% shows 98.5–101.5, not a ragged in-between edge).
-      const dev = Math.max(Math.abs(rawMax - 100), Math.abs(100 - rawMin));
-      const roundedDev = Math.max(1, Math.ceil(dev / 0.5) * 0.5);
-      min = 100 - roundedDev;
-      max = 100 + roundedDev;
-    } else {
-      const pad = (rawMax - rawMin) * 0.08 || 0.05;
-      min = rawMin - pad;
-      max = rawMax + pad;
-    }
+    // Always fit the axis to the day's actual movement (plus a little
+    // padding), rather than forcing a minimum range — a flat day should
+    // fill the chart vertically, not sit squeezed into a thin fixed band.
+    const pad = (rawMax - rawMin) * 0.08 || 0.05;
+    const min = rawMin - pad;
+    const max = rawMax + pad;
     const spread = max - min || 1;
 
     const x = (i: number) => padding.left + (i / (points.length - 1)) * plotW;
@@ -218,10 +208,9 @@ export default function NavChart(_props: { history?: NavPoint[] }) {
     // Ticks are exact multiples of a fixed step *from* 100, so spacing is
     // perfectly even and 100.00 itself always lands on one of them, instead
     // of generating evenly-spaced ticks first and then patching 100 in.
-    const step = isDaily ? 0.5 : spread / 4 || 0.01;
-    const kRange = isDaily ? 40 : 4; // 0.5 is a small fixed step, so daily needs more k's to cover the spread
+    const step = spread / 4 || 0.01;
     const yTicks: number[] = [];
-    for (let k = -kRange; k <= kRange; k++) {
+    for (let k = -4; k <= 4; k++) {
       const v = 100 + k * step;
       if (v >= min - 1e-9 && v <= max + 1e-9) yTicks.push(v);
     }
