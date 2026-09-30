@@ -652,7 +652,7 @@ export default function NavChart({ history: _history, portfolioName }: { history
 
     return (
       <>
-        <svg viewBox={`0 0 ${width} ${height}`} className="w-full" preserveAspectRatio="none">
+        <svg viewBox={`0 0 ${width} ${height}`} className="h-60 w-full sm:h-auto" preserveAspectRatio="none">
           {!isDaily && (
             <defs>
               <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
