@@ -152,32 +152,36 @@ export default function NavChart(_props: { history?: NavPoint[] }) {
     const x = (i: number) => padding.left + (i / (points.length - 1)) * plotW;
     const y = (nav: number) => padding.top + plotH - ((nav - min) / spread) * plotH;
 
+    const isDaily = range === "1D";
     const linePixels = points.map((p, i) => ({ x: x(i), nav: p.nav }));
 
     // Split the series into runs that are entirely at-or-above 100 or
     // entirely below it, inserting an exact interpolated point wherever the
     // line crosses the baseline, so each run can be colored solidly without
-    // a color ever being wrong for part of a run.
+    // a color ever being wrong for part of a run. Only done for 1D — the
+    // longer ranges use one color for the whole line, like before.
     type Seg = { up: boolean; pts: { x: number; nav: number }[] };
     const segments: Seg[] = [];
-    let run: { x: number; nav: number }[] = [linePixels[0]];
-    let runUp = linePixels[0].nav >= 100;
-    for (let i = 1; i < linePixels.length; i++) {
-      const prev = linePixels[i - 1];
-      const curr = linePixels[i];
-      const currUp = curr.nav >= 100;
-      if (currUp === runUp) {
-        run.push(curr);
-      } else {
-        const t = (100 - prev.nav) / (curr.nav - prev.nav);
-        const cross = { x: prev.x + t * (curr.x - prev.x), nav: 100 };
-        run.push(cross);
-        segments.push({ up: runUp, pts: run });
-        run = [cross, curr];
-        runUp = currUp;
+    if (isDaily) {
+      let run: { x: number; nav: number }[] = [linePixels[0]];
+      let runUp = linePixels[0].nav >= 100;
+      for (let i = 1; i < linePixels.length; i++) {
+        const prev = linePixels[i - 1];
+        const curr = linePixels[i];
+        const currUp = curr.nav >= 100;
+        if (currUp === runUp) {
+          run.push(curr);
+        } else {
+          const t = (100 - prev.nav) / (curr.nav - prev.nav);
+          const cross = { x: prev.x + t * (curr.x - prev.x), nav: 100 };
+          run.push(cross);
+          segments.push({ up: runUp, pts: run });
+          run = [cross, curr];
+          runUp = currUp;
+        }
       }
+      segments.push({ up: runUp, pts: run });
     }
-    segments.push({ up: runUp, pts: run });
 
     const UP_COLOR = "#34d399";
     const DOWN_COLOR = "#f87171";
@@ -186,15 +190,22 @@ export default function NavChart(_props: { history?: NavPoint[] }) {
     const first = points[0].nav;
     const last = points[points.length - 1].nav;
     const isUp = last >= first;
+    const overallColor = isUp ? UP_COLOR : DOWN_COLOR;
+    const gradientId = `nav-gradient-${isUp ? "up" : "down"}`;
     const periodChange = first !== 0 ? ((last - first) / first) * 100 : null;
 
-    const Y_TICKS = 4;
-    const autoTicks = Array.from({ length: Y_TICKS + 1 }, (_, i) => min + (spread * i) / Y_TICKS);
-    // 100 is always the range's own starting point after rebasing, so it's
-    // the one reference line that matters most — show it exactly, and drop
-    // any auto tick that would land too close to it and just look duplicated.
-    const minGap = spread * 0.06;
-    const yTicks = [...autoTicks.filter((v) => Math.abs(v - 100) > minGap), 100].sort((a, b) => a - b);
+    const singleLinePath = points.map((p, i) => `${i === 0 ? "M" : "L"} ${x(i).toFixed(1)} ${y(p.nav).toFixed(1)}`).join(" ");
+    const singleAreaPath = `${singleLinePath} L ${x(points.length - 1).toFixed(1)} ${padding.top + plotH} L ${x(0).toFixed(1)} ${padding.top + plotH} Z`;
+
+    // Ticks are exact multiples of a fixed step *from* 100, so spacing is
+    // perfectly even and 100.00 itself always lands on one of them, instead
+    // of generating evenly-spaced ticks first and then patching 100 in.
+    const step = spread / 4 || 0.01;
+    const yTicks: number[] = [];
+    for (let k = -4; k <= 4; k++) {
+      const v = 100 + k * step;
+      if (v >= min - 1e-9 && v <= max + 1e-9) yTicks.push(v);
+    }
 
     const fmtX = (iso: string) =>
       range === "1D"
@@ -216,6 +227,15 @@ export default function NavChart(_props: { history?: NavPoint[] }) {
     return (
       <>
         <svg viewBox={`0 0 ${width} ${height}`} className="w-full" preserveAspectRatio="none">
+          {!isDaily && (
+            <defs>
+              <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={overallColor} stopOpacity="0.25" />
+                <stop offset="100%" stopColor={overallColor} stopOpacity="0" />
+              </linearGradient>
+            </defs>
+          )}
+
           {yTicks.map((v, i) => {
             const isBaseline = v === 100;
             return (
@@ -244,22 +264,31 @@ export default function NavChart(_props: { history?: NavPoint[] }) {
             );
           })}
 
-          {segments.map((seg, i) => {
-            const color = seg.up ? UP_COLOR : DOWN_COLOR;
-            const linePath = seg.pts.map((p, j) => `${j === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${y(p.nav).toFixed(1)}`).join(" ");
-            const lastPt = seg.pts[seg.pts.length - 1];
-            const firstPt = seg.pts[0];
-            const areaPath = `${linePath} L ${lastPt.x.toFixed(1)} ${yBase.toFixed(1)} L ${firstPt.x.toFixed(1)} ${yBase.toFixed(1)} Z`;
-            return (
-              <g key={i}>
-                <path d={areaPath} fill={color} fillOpacity="0.15" stroke="none" />
-                <path d={linePath} fill="none" stroke={color} strokeWidth="1.5" />
-              </g>
-            );
-          })}
-
-          {points.length <= 60 &&
-            points.map((p, i) => <circle key={i} cx={x(i)} cy={y(p.nav)} r="2.5" fill={p.nav >= 100 ? UP_COLOR : DOWN_COLOR} />)}
+          {isDaily ? (
+            <>
+              {segments.map((seg, i) => {
+                const color = seg.up ? UP_COLOR : DOWN_COLOR;
+                const linePath = seg.pts.map((p, j) => `${j === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${y(p.nav).toFixed(1)}`).join(" ");
+                const lastPt = seg.pts[seg.pts.length - 1];
+                const firstPt = seg.pts[0];
+                const areaPath = `${linePath} L ${lastPt.x.toFixed(1)} ${yBase.toFixed(1)} L ${firstPt.x.toFixed(1)} ${yBase.toFixed(1)} Z`;
+                return (
+                  <g key={i}>
+                    <path d={areaPath} fill={color} fillOpacity="0.15" stroke="none" />
+                    <path d={linePath} fill="none" stroke={color} strokeWidth="1.5" />
+                  </g>
+                );
+              })}
+              {points.length <= 60 &&
+                points.map((p, i) => <circle key={i} cx={x(i)} cy={y(p.nav)} r="2.5" fill={p.nav >= 100 ? UP_COLOR : DOWN_COLOR} />)}
+            </>
+          ) : (
+            <>
+              <path d={singleAreaPath} fill={`url(#${gradientId})`} stroke="none" />
+              <path d={singleLinePath} fill="none" stroke={overallColor} strokeWidth="1.5" />
+              {points.length <= 60 && points.map((p, i) => <circle key={i} cx={x(i)} cy={y(p.nav)} r="2.5" fill={overallColor} />)}
+            </>
+          )}
 
           {xTicks.map(({ idx, label }) => (
             <text
