@@ -42,13 +42,44 @@ function downsample(points: NavPoint[], max: number): NavPoint[] {
 }
 
 async function fetchSeries(key: string): Promise<NavPoint[]> {
-  const all: NavPoint[] = [];
-  for (let page = 0; page < 40; page++) {
-    const from = page * PAGE;
-    const { data, error } = await supabase.rpc("nav_series", { p_range: key }).range(from, from + PAGE - 1);
+  if (key !== "1D") {
+    // MTD/YTD/ALL are small, aggregated results (one closing point per
+    // day) — comfortably under a page, so a single call is enough.
+    const { data, error } = await supabase.rpc("nav_series", { p_range: key });
     if (error) throw new Error(error.message);
-    const rows = (data as NavPoint[]) ?? [];
-    all.push(...rows.map((r) => ({ ts: r.ts, nav: Number(r.nav) })));
+    return ((data as NavPoint[]) ?? []).map((r) => ({ ts: r.ts, nav: Number(r.nav) }));
+  }
+
+  // 1D returns every raw tick of the trading day — thousands of rows on a
+  // busy day, too many for one request. We used to page through this with
+  // .range(offset, offset+999), but that's OFFSET pagination against a
+  // table the quote worker keeps inserting into every ~10s: while a
+  // multi-page fetch is still in flight, newly inserted rows can shift
+  // which rows land at which offset, silently dropping or duplicating a
+  // whole chunk of the day depending on timing (this is what caused the
+  // chart to sometimes render a much flatter, incomplete version of the
+  // day). Keyset pagination — asking for "everything after the last
+  // timestamp I've already got" instead of a numeric position — is immune
+  // to that, since each page is anchored to a real value rather than a
+  // position that can move underneath it.
+  const { data: seed, error: seedErr } = await supabase.rpc("nav_series", { p_range: "1D" });
+  if (seedErr) throw new Error(seedErr.message);
+  const all: NavPoint[] = ((seed as NavPoint[]) ?? []).map((r) => ({ ts: r.ts, nav: Number(r.nav) }));
+  if (all.length === 0) return all;
+
+  let cursor = all[all.length - 1].ts;
+  for (let page = 0; page < 60; page++) {
+    const { data, error } = await supabase
+      .from("nav_history")
+      .select("ts, nav")
+      .gt("ts", cursor)
+      .order("ts", { ascending: true })
+      .limit(PAGE);
+    if (error) throw new Error(error.message);
+    const rows = ((data as { ts: string; nav: number }[]) ?? []).map((r) => ({ ts: r.ts, nav: Number(r.nav) }));
+    if (rows.length === 0) break;
+    all.push(...rows);
+    cursor = rows[rows.length - 1].ts;
     if (rows.length < PAGE) break;
   }
   return all;
