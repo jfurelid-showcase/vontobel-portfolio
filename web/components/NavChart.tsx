@@ -34,10 +34,35 @@ const stockholmDay = (iso: string) =>
 
 function downsample(points: NavPoint[], max: number): NavPoint[] {
   if (points.length <= max) return points;
-  const step = (points.length - 1) / (max - 1);
-  const out: NavPoint[] = [];
-  for (let i = 0; i < max - 1; i++) out.push(points[Math.round(i * step)]);
-  out.push(points[points.length - 1]);
+  // Bucket by TIME SPAN, not by index position. Index-based striding picks
+  // "every Nth point" based on the CURRENT total count — as new ticks keep
+  // arriving every ~10s, that total keeps changing, so the exact same
+  // moment in history can land on a different sampled point on every
+  // refetch. A brief few-tick price excursion can then flicker in and out
+  // of the drawn line purely because of when you happened to load the
+  // chart, which looks like a rendering bug even though the underlying
+  // data never changed. Bucketing by time instead means each bucket's
+  // boundaries barely shift as the day goes on, so the same historical
+  // moment reliably lands in the same bucket (and shows the same value)
+  // on every load.
+  const firstTs = new Date(points[0].ts).getTime();
+  const lastTs = new Date(points[points.length - 1].ts).getTime();
+  const span = lastTs - firstTs || 1;
+  const bucketMs = span / (max - 1);
+  const out: NavPoint[] = [points[0]];
+  let bucketIdx = 0;
+  let lastInBucket = points[0];
+  for (let i = 1; i < points.length; i++) {
+    const p = points[i];
+    const t = new Date(p.ts).getTime();
+    const thisBucket = Math.min(max - 2, Math.floor((t - firstTs) / bucketMs));
+    if (thisBucket !== bucketIdx) {
+      out.push(lastInBucket);
+      bucketIdx = thisBucket;
+    }
+    lastInBucket = p;
+  }
+  out.push(lastInBucket);
   return out;
 }
 
