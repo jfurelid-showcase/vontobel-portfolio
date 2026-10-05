@@ -19,10 +19,10 @@ const COLUMN_SETS = [
   "trader_photo_url, trader_name, trader_level",
 ];
 
-export async function fetchTraderRow(): Promise<TraderRow | null> {
+export async function fetchTraderRow(portfolioId: number): Promise<TraderRow | null> {
   for (const cols of COLUMN_SETS) {
-    const res = await supabase.from("portfolio_settings").select(cols).single();
-    if (!res.error) return res.data as TraderRow;
+    const res = await supabase.from("portfolio_settings").select(cols).eq("id", portfolioId).maybeSingle();
+    if (!res.error) return (res.data as TraderRow | null) ?? null;
   }
   return null;
 }

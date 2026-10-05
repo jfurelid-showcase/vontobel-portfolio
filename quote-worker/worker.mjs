@@ -2,7 +2,8 @@
 //
 // Always-on Node process (deploy to Railway/Fly.io/any host that stays
 // alive 24/7 — Vercel functions cannot). Every REFRESH_INTERVAL_MS it:
-//   1. Reads the ISINs of currently open portfolio positions from Supabase.
+//   1. Reads every portfolio's positions from Supabase (the owner's and each
+//      guest's) and collects the distinct ISINs of all open positions.
 //   2. Looks up each one's NGM internal id (insref) from certificates_full.
 //   3. Calls NGM's own per-instrument API directly for a fresh price —
 //      the same backend endpoint discovered while building the full-list
@@ -10,7 +11,8 @@
 //      This is a lightweight JSON GET per position, not a page render, so
 //      polling every ~10s for a normal-sized portfolio is cheap.
 //   4. Writes current_price back onto each position, appends to
-//      price_ticks, recomputes NAV, and appends to nav_history.
+//      price_ticks, recomputes each portfolio's own NAV and appends one
+//      nav_history row per portfolio.
 //
 // Because portfolio_positions/price_ticks/nav_history are in the Supabase
 // Realtime publication (see supabase/migrations/0001_init.sql), the
@@ -102,23 +104,39 @@ async function fetchLivePrice(insref) {
   return null;
 }
 
+// Every portfolio's positions, in as few queries as possible. PostgREST caps a
+// single response (1000 rows by default), and a silently truncated list would
+// produce a wrong NAV, so page through by id until a short page comes back.
+// For normal sizes that is exactly ONE query, i.e. one consistent snapshot.
+const POSITION_PAGE = 1000;
+async function fetchAllPositions() {
+  const all = [];
+  let cursor = null;
+  for (let page = 0; page < 500; page++) {
+    let q = supabase
+      .from("portfolio_positions")
+      .select("id, portfolio_id, isin, status, entry_price, stake_sek, current_price, exit_price")
+      .order("id", { ascending: true })
+      .limit(POSITION_PAGE);
+    if (cursor) q = q.gt("id", cursor);
+    const { data, error } = await q;
+    if (error) throw error;
+    const rows = data || [];
+    all.push(...rows);
+    if (rows.length < POSITION_PAGE) break;
+    cursor = rows[rows.length - 1].id;
+  }
+  return all;
+}
+
 async function tick() {
-  // Fetch EVERY position's status/prices in one single query, so there is
-  // one consistent snapshot in time. Splitting this into two separate
-  // queries (open positions first, closed positions much later, after
-  // several seconds of price-fetching in between) left a race window: if a
-  // position got closed by the admin UI in between those two queries, it
-  // was still "open" when the first query ran but already "closed" by the
-  // time the second one ran — so it got counted TWICE in that tick's P/L
-  // (once via its stale open-position price, once via its exit price),
-  // producing a brief, self-correcting NAV spike exactly when a position
-  // was closed. A single query makes that impossible: each row's status is
-  // read once, atomically, so it can only ever land in one bucket.
-  const { data: allPositionsRaw, error } = await supabase
-    .from("portfolio_positions")
-    .select("id, isin, status, entry_price, stake_sek, current_price, exit_price");
-  if (error) throw error;
-  const allPositions = allPositionsRaw || [];
+  // Fetch EVERY portfolio's positions (status and prices) in one go, so there
+  // is one consistent snapshot in time. Splitting this into separate queries
+  // for open and closed positions, with several seconds of price-fetching in
+  // between, once let a position that was closed mid-tick be counted twice
+  // (as open AND as closed), producing a brief NAV spike. Reading each row's
+  // status once makes that impossible.
+  const allPositions = await fetchAllPositions();
   const openPositions = allPositions.filter((p) => p.status === "open");
   const closedPositions = allPositions.filter((p) => p.status === "closed");
 
@@ -127,14 +145,13 @@ async function tick() {
 
   if (openPositions.length === 0) {
     // No open positions to fetch live prices for, but we still record a NAV
-    // point below from closed trades. Without this, closing your last open
-    // position (or reopening/editing/deleting one while none are open)
-    // would silently stop updating NAV until a new position is opened,
-    // since there'd be nothing left to trigger a tick that writes one.
+    // point below from closed trades. Without this, closing the last open
+    // position of a portfolio would silently stop updating its NAV.
     console.log("No open positions — recording NAV from closed trades only.");
   } else {
     await ensureBrowser();
 
+    // Prices are fetched once per instrument, however many portfolios hold it.
     const isins = [...new Set(openPositions.map((p) => p.isin))];
     const { data: certs, error: certErr } = await supabase
       .from("certificates_full")
@@ -160,19 +177,19 @@ async function tick() {
     );
   }
 
-  // NAV is now pinned to a fixed capital base (portfolio_settings.cash_sek,
-  // e.g. 100000 SEK = NAV 100) instead of a weighted-return index. This way
-  // NAV moves in direct proportion to real SEK profit/loss against that
-  // base:  NAV = 100 + 100 * (total P/L in SEK) / base_capital.
-  const { data: settings } = await supabase.from("portfolio_settings").select("cash_sek").single();
-  const baseCapital = settings?.cash_sek || 100000;
+  // Each portfolio has its own capital base:
+  //   NAV = 100 + 100 * (total P/L in SEK) / base_capital
+  const { data: settingsRows } = await supabase.from("portfolio_settings").select("id, cash_sek");
+  const capitalById = new Map((settingsRows || []).map((s) => [s.id, Number(s.cash_sek) || 100000]));
 
-  let totalPl = 0;
+  const plById = new Map(); // portfolio id -> total P/L in SEK
+  const addPl = (portfolioId, amount) => plById.set(portfolioId, (plById.get(portfolioId) ?? 0) + amount);
 
   for (const pos of openPositions) {
+    if (!plById.has(pos.portfolio_id)) plById.set(pos.portfolio_id, 0);
     const price = priceByIsin.get(pos.isin) ?? pos.current_price; // fall back to last known price if this tick's fetch failed
     if (price != null) {
-      totalPl += pos.stake_sek * ((price - pos.entry_price) / pos.entry_price);
+      addPl(pos.portfolio_id, pos.stake_sek * ((price - pos.entry_price) / pos.entry_price));
     }
 
     const freshPrice = priceByIsin.get(pos.isin);
@@ -187,16 +204,30 @@ async function tick() {
   }
 
   for (const pos of closedPositions) {
+    if (!plById.has(pos.portfolio_id)) plById.set(pos.portfolio_id, 0);
     if (pos.exit_price != null) {
-      totalPl += pos.stake_sek * ((pos.exit_price - pos.entry_price) / pos.entry_price);
+      addPl(pos.portfolio_id, pos.stake_sek * ((pos.exit_price - pos.entry_price) / pos.entry_price));
     }
   }
 
-  const nav = 100 + (100 * totalPl) / baseCapital;
+  // One NAV point per portfolio that has (or had) positions. A portfolio with
+  // none can't have changed, so it gets no rows. Inserted separately so that a
+  // portfolio deleted a moment ago can't stop the others from being recorded.
+  const navRows = [...plById.entries()].map(([portfolioId, pl]) => {
+    const capital = capitalById.get(portfolioId) ?? 100000;
+    return { ts: now, nav: 100 + (100 * pl) / capital, portfolio_id: portfolioId };
+  });
+  const results = await Promise.allSettled(
+    navRows.map(async (row) => {
+      const { error } = await supabase.from("nav_history").insert(row);
+      if (error) throw new Error(`portfolio ${row.portfolio_id}: ${error.message}`);
+    })
+  );
+  for (const r of results) if (r.status === "rejected") console.warn("NAV insert failed:", r.reason?.message ?? r.reason);
 
-  await supabase.from("nav_history").insert({ ts: now, nav });
+  const summary = navRows.map((r) => `#${r.portfolio_id}=${r.nav.toFixed(2)}`).join(" ");
   console.log(
-    `Tick ${now}: ${priceByIsin.size}/${openPositions.length} prices updated (${openPositions.length} open), P/L=${totalPl.toFixed(0)} SEK, NAV=${nav.toFixed(2)}`
+    `Tick ${now}: ${priceByIsin.size}/${new Set(openPositions.map((p) => p.isin)).size} prices updated (${openPositions.length} open positions), ${navRows.length} portfolios NAV: ${summary || "none"}`
   );
 }
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { usePortfolio } from "@/lib/portfolioClient";
 
 type Archive = {
   id: string;
@@ -50,6 +51,7 @@ const slugify = (s: string) =>
     .replace(/^-|-$/g, "") || "portfolio";
 
 export default function PortfolioLifecycle() {
+  const { id: portfolioId, authFetch } = usePortfolio();
   const [info, setInfo] = useState<Info | null>(null);
   const [archives, setArchives] = useState<Archive[]>([]);
   const [expanded, setExpanded] = useState(false);
@@ -68,10 +70,10 @@ export default function PortfolioLifecycle() {
 
   async function loadInfo() {
     const [{ data: settings }, { data: pos }, { data: firstNav }, { data: lastNav }] = await Promise.all([
-      supabase.from("portfolio_settings").select("cash_sek, started_at, portfolio_name").single(),
-      supabase.from("portfolio_positions").select("id, status"),
-      supabase.from("nav_history").select("ts").order("ts", { ascending: true }).limit(1),
-      supabase.from("nav_history").select("nav").order("ts", { ascending: false }).limit(1),
+      supabase.from("portfolio_settings").select("cash_sek, started_at, portfolio_name").eq("id", portfolioId).single(),
+      supabase.from("portfolio_positions").select("id, status").eq("portfolio_id", portfolioId),
+      supabase.from("nav_history").select("ts").eq("portfolio_id", portfolioId).order("ts", { ascending: true }).limit(1),
+      supabase.from("nav_history").select("nav").eq("portfolio_id", portfolioId).order("ts", { ascending: false }).limit(1),
     ]);
     const positions = (pos as { id: string; status: string }[]) ?? [];
     const currentName: string | null = settings?.portfolio_name ?? null;
@@ -90,6 +92,7 @@ export default function PortfolioLifecycle() {
     const { data } = await supabase
       .from("portfolio_archives")
       .select("id, name, started_at, ended_at, start_capital, final_nav, realized_pl_sek, trade_count")
+      .eq("portfolio_id", portfolioId)
       .order("ended_at", { ascending: false });
     setArchives((data as Archive[]) ?? []);
   }
@@ -97,16 +100,16 @@ export default function PortfolioLifecycle() {
   useEffect(() => {
     loadInfo();
     loadArchives();
-  }, []);
+  }, [portfolioId]);
 
   async function saveName() {
     setSavingName(true);
     setNameMsg(null);
     try {
-      const res = await fetch("/api/portfolio/name", {
+      const res = await authFetch("/api/portfolio/name", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: nameDraft }),
+        body: JSON.stringify({ portfolio_id: portfolioId, name: nameDraft }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || `Request failed (${res.status})`);
@@ -138,10 +141,10 @@ export default function PortfolioLifecycle() {
       if (parsed != null && (!Number.isFinite(parsed) || parsed <= 0)) {
         throw new Error("Enter a positive number for the new start capital.");
       }
-      const res = await fetch("/api/portfolio/end", {
+      const res = await authFetch("/api/portfolio/end", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, new_name: newName, new_capital: parsed, confirm: confirmText }),
+        body: JSON.stringify({ portfolio_id: portfolioId, name, new_name: newName, new_capital: parsed, confirm: confirmText }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || `Request failed (${res.status})`);

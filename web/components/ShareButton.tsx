@@ -1,29 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { EMBED_TABS, embedCode, embedUrl } from "@/lib/embed";
+import { usePortfolio } from "@/lib/portfolioClient";
 
-type TabKey = "dashboard" | "trades";
-
-const OPTIONS: { key: TabKey; label: string; height: number }[] = [
-  { key: "dashboard", label: "Dashboard", height: 900 },
-  { key: "trades", label: "Trades", height: 800 },
-];
-
-function urlFor(origin: string, key: TabKey) {
-  return `${origin}/?tab=${key}&embed=1`;
-}
-
-function embedCodeFor(origin: string, key: TabKey, height: number) {
-  return `<iframe
-  src="${urlFor(origin, key)}"
-  width="100%"
-  height="${height}"
-  style="border: none;"
-  loading="lazy"
-></iframe>`;
-}
+const OPTIONS = EMBED_TABS;
 
 export default function ShareButton() {
+  const { slug } = usePortfolio();
   const [open, setOpen] = useState(false);
   const [origin, setOrigin] = useState("");
   const [copied, setCopied] = useState<string | null>(null);
@@ -84,9 +68,9 @@ export default function ShareButton() {
           <div className="mb-3 text-sm font-medium text-neutral-200">Share or embed</div>
 
           <div className="space-y-4">
-            {OPTIONS.map(({ key, label, height }) => {
-              const link = origin ? urlFor(origin, key) : "";
-              const code = origin ? embedCodeFor(origin, key, height) : "";
+            {OPTIONS.map(({ key, label }) => {
+              const link = origin ? embedUrl(origin, slug, key) : "";
+              const code = origin ? embedCode(origin, slug, key) : "";
               return (
                 <div key={key}>
                   <div className="mb-1 text-xs font-medium uppercase tracking-wide text-neutral-500">{label}</div>

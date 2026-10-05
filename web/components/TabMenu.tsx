@@ -4,13 +4,24 @@ import { useEffect, useRef, useState } from "react";
 
 type TabKey = "dashboard" | "trades" | "admin";
 
-const TABS: [TabKey, string][] = [
-  ["dashboard", "Dashboard"],
-  ["trades", "Trades"],
-  ["admin", "Admin"],
-];
+function tabsFor(adminLabel: string): [TabKey, string][] {
+  return [
+    ["dashboard", "Dashboard"],
+    ["trades", "Trades"],
+    ["admin", adminLabel],
+  ];
+}
 
-export default function TabMenu({ tab, setTab }: { tab: TabKey; setTab: (t: TabKey) => void }) {
+export default function TabMenu({
+  tab,
+  setTab,
+  adminLabel = "Admin",
+}: {
+  tab: TabKey;
+  setTab: (t: TabKey) => void;
+  adminLabel?: string;
+}) {
+  const TABS = tabsFor(adminLabel);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 

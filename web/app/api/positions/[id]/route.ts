@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { portfolioOfPosition, requireAccess } from "@/lib/auth";
 
 // PATCH: edit any of a position's editable fields (works for open or closed
 // positions — e.g. fixing a typo'd entry price, adjusting stop/target,
@@ -7,6 +8,11 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 // Body: any subset of { entry_price, quantity, stop_loss, target_price,
 //                        exit_price, note, podcast_episode }
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+  const portfolioId = await portfolioOfPosition(params.id);
+  if (portfolioId == null) return NextResponse.json({ error: "Position not found" }, { status: 404 });
+  const access = await requireAccess(req, portfolioId);
+  if (!access.ok) return access.res;
+
   const body = await req.json();
   const allowed = [
     "entry_price",
@@ -56,7 +62,12 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 // This also cascades to delete its price_ticks (see the foreign key in
 // 0001_init.sql), so it cleanly disappears from history entirely, not just
 // from the current view.
-export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+  const portfolioId = await portfolioOfPosition(params.id);
+  if (portfolioId == null) return NextResponse.json({ error: "Position not found" }, { status: 404 });
+  const access = await requireAccess(req, portfolioId);
+  if (!access.ok) return access.res;
+
   const { error } = await supabaseAdmin.from("portfolio_positions").delete().eq("id", params.id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true });

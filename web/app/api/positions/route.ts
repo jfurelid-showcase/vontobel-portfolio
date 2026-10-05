@@ -1,10 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { portfolioIdFrom, requireAccess } from "@/lib/auth";
 
-export async function GET() {
+// GET /api/positions?portfolio_id=<id>   (public read, like the dashboards)
+export async function GET(req: NextRequest) {
+  const portfolioId = portfolioIdFrom(req.nextUrl.searchParams.get("portfolio_id"));
+  if (portfolioId == null) return NextResponse.json({ error: "Ogiltigt portfolio_id" }, { status: 400 });
+
   const { data, error } = await supabaseAdmin
     .from("portfolio_positions")
     .select("*")
+    .eq("portfolio_id", portfolioId)
     .order("created_at", { ascending: false });
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
@@ -38,6 +44,11 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   const { isin, entry_price, stop_loss, target_price, quantity, note, podcast_episode } = body;
 
+  const portfolioId = portfolioIdFrom(body.portfolio_id);
+  if (portfolioId == null) return NextResponse.json({ error: "Ogiltigt portfolio_id" }, { status: 400 });
+  const access = await requireAccess(req, portfolioId);
+  if (!access.ok) return access.res;
+
   if (!isin || !entry_price || !quantity) {
     return NextResponse.json({ error: "isin, entry_price and quantity are required" }, { status: 400 });
   }
@@ -55,6 +66,7 @@ export async function POST(req: NextRequest) {
   const { data, error } = await supabaseAdmin
     .from("portfolio_positions")
     .insert({
+      portfolio_id: portfolioId,
       isin,
       name: cert.name,
       direction: cert.direction,

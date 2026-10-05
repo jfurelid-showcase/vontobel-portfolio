@@ -3,11 +3,13 @@
 import { useEffect, useState } from "react";
 import Flag from "@/components/Flag";
 import { fetchTraderRow } from "@/lib/traderSettings";
+import { usePortfolio } from "@/lib/portfolioClient";
 import { parseStyle } from "@/lib/traderStyle";
 
 const LEVEL_LABELS: Record<string, string> = { noob: "Nybörjare", intermediate: "Mellan", pro: "Proffs" };
 
 export default function TraderBadge() {
+  const { id: portfolioId } = usePortfolio();
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [name, setName] = useState<string | null>(null);
   const [level, setLevel] = useState<string | null>(null);
@@ -16,14 +18,14 @@ export default function TraderBadge() {
 
   useEffect(() => {
     (async () => {
-      const data = await fetchTraderRow();
+      const data = await fetchTraderRow(portfolioId);
       setPhotoUrl(data?.trader_photo_url ?? null);
       setName(data?.trader_name ?? null);
       setLevel(data?.trader_level ?? null);
       setStyle(data?.trader_style ?? null);
       setCountry(data?.trader_country ?? null);
     })();
-  }, []);
+  }, [portfolioId]);
 
   if (!photoUrl && !name && !level && !style && !country) return null;
 

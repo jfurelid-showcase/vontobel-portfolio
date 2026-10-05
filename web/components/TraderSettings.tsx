@@ -4,11 +4,13 @@ import { useEffect, useMemo, useState } from "react";
 import Flag from "@/components/Flag";
 import { countryOptions } from "@/lib/countries";
 import { fetchTraderRow } from "@/lib/traderSettings";
+import { usePortfolio } from "@/lib/portfolioClient";
 import { MAX_VISIBLE_LENGTH, RAW_MAX_LENGTH, visibleLength } from "@/lib/traderStyle";
 
 const LEVELS = ["noob", "intermediate", "pro"] as const;
 
 export default function TraderSettings() {
+  const { id: portfolioId, authFetch } = usePortfolio();
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [level, setLevel] = useState<string>("intermediate");
@@ -20,14 +22,14 @@ export default function TraderSettings() {
 
   useEffect(() => {
     (async () => {
-      const data = await fetchTraderRow();
+      const data = await fetchTraderRow(portfolioId);
       setPhotoUrl(data?.trader_photo_url ?? null);
       setName(data?.trader_name ?? "");
       setLevel(data?.trader_level ?? "intermediate");
       setStyle(data?.trader_style ?? "");
       setCountry(data?.trader_country ?? "");
     })();
-  }, []);
+  }, [portfolioId]);
 
   const styleVisible = visibleLength(style);
   const styleTooLong = styleVisible > MAX_VISIBLE_LENGTH;
@@ -36,12 +38,13 @@ export default function TraderSettings() {
     setSaving(true);
     const formData = new FormData();
     if (file) formData.append("photo", file);
+    formData.append("portfolio_id", String(portfolioId));
     formData.append("name", name);
     formData.append("level", level);
     formData.append("style", style);
     formData.append("country", country);
 
-    const res = await fetch("/api/settings/trader", { method: "POST", body: formData });
+    const res = await authFetch("/api/settings/trader", { method: "POST", body: formData });
     setSaving(false);
     if (res.ok) {
       const data = await res.json();

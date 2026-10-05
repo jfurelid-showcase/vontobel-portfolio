@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { usePortfolio } from "@/lib/portfolioClient";
 
 type NavPoint = { ts: string; nav: number };
 type TradeEvent = {
@@ -66,11 +67,11 @@ function downsample(points: NavPoint[], max: number): NavPoint[] {
   return out;
 }
 
-async function fetchSeries(key: string): Promise<NavPoint[]> {
+async function fetchSeries(key: string, portfolioId: number): Promise<NavPoint[]> {
   if (key !== "1D") {
     // MTD/YTD/ALL are small, aggregated results (one closing point per
     // day) — comfortably under a page, so a single call is enough.
-    const { data, error } = await supabase.rpc("nav_series", { p_range: key });
+    const { data, error } = await supabase.rpc("nav_series", { p_range: key, p_portfolio: portfolioId });
     if (error) throw new Error(error.message);
     return ((data as NavPoint[]) ?? []).map((r) => ({ ts: r.ts, nav: Number(r.nav) }));
   }
@@ -87,7 +88,7 @@ async function fetchSeries(key: string): Promise<NavPoint[]> {
   // timestamp I've already got" instead of a numeric position — is immune
   // to that, since each page is anchored to a real value rather than a
   // position that can move underneath it.
-  const { data: seed, error: seedErr } = await supabase.rpc("nav_series", { p_range: "1D" });
+  const { data: seed, error: seedErr } = await supabase.rpc("nav_series", { p_range: "1D", p_portfolio: portfolioId });
   if (seedErr) throw new Error(seedErr.message);
   const all: NavPoint[] = ((seed as NavPoint[]) ?? []).map((r) => ({ ts: r.ts, nav: Number(r.nav) }));
   if (all.length === 0) return all;
@@ -97,6 +98,7 @@ async function fetchSeries(key: string): Promise<NavPoint[]> {
     const { data, error } = await supabase
       .from("nav_history")
       .select("ts, nav")
+      .eq("portfolio_id", portfolioId)
       .gt("ts", cursor)
       .order("ts", { ascending: true })
       .limit(PAGE);
@@ -113,6 +115,7 @@ async function fetchSeries(key: string): Promise<NavPoint[]> {
 // `history` is accepted (and ignored) so existing <NavChart history={...} />
 // calls in page.tsx keep compiling — the chart now loads its own data.
 export default function NavChart({ history: _history, portfolioName }: { history?: NavPoint[]; portfolioName?: string | null }) {
+  const { id: portfolioId } = usePortfolio();
   const [range, setRange] = useState<RangeLabel>("1D");
   const [isMobile, setIsMobile] = useState(false);
 
@@ -157,7 +160,7 @@ export default function NavChart({ history: _history, portfolioName }: { history
 
     async function fullLoad() {
       try {
-        const rows = await fetchSeries(key);
+        const rows = await fetchSeries(key, portfolioId);
         if (cancelled) return;
         lastTsRef.current = rows.length ? rows[rows.length - 1].ts : null;
         setRaw(rows);
@@ -175,6 +178,7 @@ export default function NavChart({ history: _history, portfolioName }: { history
       const { data, error } = await supabase
         .from("nav_history")
         .select("ts, nav")
+        .eq("portfolio_id", portfolioId)
         .gt("ts", last)
         .order("ts", { ascending: true })
         .limit(PAGE);
@@ -203,7 +207,7 @@ export default function NavChart({ history: _history, portfolioName }: { history
       cancelled = true;
       clearInterval(t);
     };
-  }, [range]);
+  }, [range, portfolioId]);
 
   const points = useMemo(() => {
     const p = downsample(raw, MAX_DRAW_POINTS);
@@ -227,6 +231,7 @@ export default function NavChart({ history: _history, portfolioName }: { history
     supabase
       .from("portfolio_positions")
       .select("id, name, direction, entry_time, exit_time, entry_price, exit_price, quantity, stake_sek")
+      .eq("portfolio_id", portfolioId)
       .then(({ data, error }) => {
         if (cancelled || error || !data) return;
         const events: TradeEvent[] = [];
@@ -264,7 +269,7 @@ export default function NavChart({ history: _history, portfolioName }: { history
     return () => {
       cancelled = true;
     };
-  }, [dayKey]);
+  }, [dayKey, portfolioId]);
 
   function buildExportCanvas(): HTMLCanvasElement | null {
     if (points.length < 2) return null;

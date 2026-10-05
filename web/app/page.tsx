@@ -14,6 +14,8 @@ import ShareButton from "@/components/ShareButton";
 import MarketStatus from "@/components/MarketStatus";
 import TabMenu from "@/components/TabMenu";
 import PositionsExportButton from "@/components/PositionsExport";
+import AdminTab from "@/components/AdminTab";
+import { PortfolioProvider, usePortfolio } from "@/lib/portfolioClient";
 type Position = Parameters<typeof PositionCard>[0]["p"] & {
   stake_sek: number;
   quantity: number | null;
@@ -42,6 +44,15 @@ type Cert = {
 // ---------------------------------------------------------------------------
 
 export default function Home() {
+  return (
+    <PortfolioProvider>
+      <HomeInner />
+    </PortfolioProvider>
+  );
+}
+
+function HomeInner() {
+  const portfolio = usePortfolio();
   const [tab, setTab] = useState<"dashboard" | "trades" | "admin">("dashboard");
   // Set once, synchronously, from the URL before first paint — an embedded
   // iframe (?tab=trades&embed=1) must never flash the Admin/full chrome
@@ -62,7 +73,33 @@ export default function Home() {
     if (t === "trades" || (t === "admin" && !isEmbed)) setTab(t);
   }, []);
 
-  const content = tab === "dashboard" ? <Dashboard /> : tab === "trades" ? <TradeLog /> : <Admin />;
+  // Until we know which portfolio this link points at, show nothing that
+  // could flash another portfolio's data.
+  if (!portfolio.ready) {
+    return <main className="mx-auto max-w-5xl px-4 py-10 text-sm text-neutral-500">Laddar…</main>;
+  }
+  if (portfolio.error || portfolio.notFound) {
+    return (
+      <main className="mx-auto max-w-5xl px-4 py-16 text-center text-neutral-300">
+        <p className="text-lg font-medium">{portfolio.notFound ? "Portföljen hittades inte" : "Något gick fel"}</p>
+        <p className="mt-2 text-sm text-neutral-500">
+          {portfolio.notFound ? "Länken kan vara felaktig, eller så har portföljen tagits bort." : portfolio.error}
+        </p>
+      </main>
+    );
+  }
+
+  const adminLabel = portfolio.admin ? "Admin" : portfolio.token ? "Min portfölj" : "Admin";
+  const content =
+    tab === "dashboard" ? (
+      <Dashboard />
+    ) : tab === "trades" ? (
+      <TradeLog />
+    ) : (
+      <AdminTab>
+        <PortfolioAdmin />
+      </AdminTab>
+    );
 
   if (embed) {
     return <main className="mx-auto max-w-5xl px-4 py-4 text-neutral-100">{content}</main>;
@@ -82,7 +119,7 @@ export default function Home() {
                 [
                   ["dashboard", "Dashboard"],
                   ["trades", "Trades"],
-                  ["admin", "Admin"],
+                  ["admin", adminLabel],
                 ] as const
               ).map(([key, label]) => (
                 <button
@@ -96,7 +133,7 @@ export default function Home() {
                 </button>
               ))}
             </div>
-            <TabMenu tab={tab} setTab={setTab} />
+            <TabMenu tab={tab} setTab={setTab} adminLabel={adminLabel} />
             {/* Desktop: Share sits in this same row. Mobile: it's hidden here
                 and shown instead on its own row below, so the hamburger can
                 share the header row with the title. */}
@@ -120,6 +157,7 @@ export default function Home() {
 // ---------------------------------------------------------------------------
 
 function Dashboard() {
+  const { id: portfolioId } = usePortfolio();
   const [positions, setPositions] = useState<Position[]>([]);
   const [navHistory, setNavHistory] = useState<NavPoint[]>([]);
   const [baseCapital, setBaseCapital] = useState<number | null>(null);
@@ -134,14 +172,14 @@ function Dashboard() {
   }>({ today: null, month: null, year: null, inception: null });
 
   useEffect(() => {
-    supabase.from("portfolio_settings").select("cash_sek, portfolio_name").single()
+    supabase.from("portfolio_settings").select("cash_sek, portfolio_name").eq("id", portfolioId).single()
       .then(({ data }) => {
         setBaseCapital(data?.cash_sek ?? null);
         setPortfolioName(data?.portfolio_name ?? null);
       });
-    supabase.from("nav_history").select("ts").order("ts", { ascending: true }).limit(1)
+    supabase.from("nav_history").select("ts").eq("portfolio_id", portfolioId).order("ts", { ascending: true }).limit(1)
       .then(({ data }) => setStartDate(data?.[0]?.ts ?? null));
-  }, []);
+  }, [portfolioId]);
 
   async function loadAll() {
     // Supabase caps a single query's rows (default 1000) regardless of any
@@ -152,8 +190,8 @@ function Dashboard() {
     // own tiny single-row query. That keeps every stat correct regardless
     // of how much history has piled up.
     const [{ data: pos }, { data: nav }] = await Promise.all([
-      supabase.from("portfolio_positions").select("*").order("created_at", { ascending: false }),
-      supabase.from("nav_history").select("ts, nav").order("ts", { ascending: false }).limit(8000),
+      supabase.from("portfolio_positions").select("*").eq("portfolio_id", portfolioId).order("created_at", { ascending: false }),
+      supabase.from("nav_history").select("ts, nav").eq("portfolio_id", portfolioId).order("ts", { ascending: false }).limit(8000),
     ]);
     setPositions((pos as Position[]) || []);
     setNavHistory(((nav as NavPoint[]) || []).slice().reverse());
@@ -161,7 +199,7 @@ function Dashboard() {
 
   async function loadReferenceNavs() {
     async function firstNavAtOrAfter(cutoff: Date | null) {
-      let q = supabase.from("nav_history").select("nav").order("ts", { ascending: true }).limit(1);
+      let q = supabase.from("nav_history").select("nav").eq("portfolio_id", portfolioId).order("ts", { ascending: true }).limit(1);
       if (cutoff) q = q.gte("ts", cutoff.toISOString());
       const { data } = await q.maybeSingle();
       return data?.nav ?? null;
@@ -179,17 +217,25 @@ function Dashboard() {
     loadAll();
     loadReferenceNavs();
     const channel = supabase
-      .channel("portfolio-live")
-      .on("postgres_changes", { event: "*", schema: "public", table: "portfolio_positions" }, loadAll)
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "nav_history" }, () => {
-        loadAll();
-        loadReferenceNavs();
-      })
+      .channel(`portfolio-live-${portfolioId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "portfolio_positions", filter: `portfolio_id=eq.${portfolioId}` },
+        loadAll
+      )
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "nav_history", filter: `portfolio_id=eq.${portfolioId}` },
+        () => {
+          loadAll();
+          loadReferenceNavs();
+        }
+      )
       .subscribe();
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [portfolioId]);
 
   const latestNav = navHistory.at(-1)?.nav ?? 100;
   function pctFrom(ref: number | null) {
@@ -470,7 +516,8 @@ function NavStat({
 // Admin tab
 // ---------------------------------------------------------------------------
 
-function Admin() {
+function PortfolioAdmin() {
+  const { id: portfolioId, authFetch } = usePortfolio();
   const [query, setQuery] = useState("");
   const [directionFilter, setDirectionFilter] = useState<"" | "Long" | "Short">("");
   const [results, setResults] = useState<Cert[]>([]);
@@ -496,7 +543,7 @@ function Admin() {
       .from("certificates_full")
       .select("*", { count: "exact", head: true })
       .then(({ count }) => setFullListCount(count ?? null));
-  }, []);
+  }, [portfolioId]);
 
   const suppressNextSearch = useRef(false);
 
@@ -522,7 +569,7 @@ function Admin() {
   }, [query, directionFilter]);
 
   async function loadPositions() {
-    const res = await fetch("/api/positions");
+    const res = await authFetch(`/api/positions?portfolio_id=${portfolioId}`);
     setPositions(await res.json());
   }
 
@@ -581,10 +628,11 @@ function Admin() {
   async function addPosition() {
     if (!selected) return;
     setSaving(true);
-    const res = await fetch("/api/positions", {
+    const res = await authFetch("/api/positions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        portfolio_id: portfolioId,
         isin: selected.isin,
         entry_price: parseFloat(form.entry_price),
         stop_loss: form.stop_loss ? parseFloat(form.stop_loss) : null,
@@ -607,19 +655,19 @@ function Admin() {
 
   async function closePosition(id: string) {
     if (!confirm("Close this position at its current price?")) return;
-    await fetch(`/api/positions/${id}/close`, { method: "POST" });
+    await authFetch(`/api/positions/${id}/close`, { method: "POST" });
     loadPositions();
   }
 
   async function reopenPosition(id: string) {
     if (!confirm("Reopen this position? Its exit will be cleared and the worker will resume tracking it.")) return;
-    await fetch(`/api/positions/${id}/reopen`, { method: "POST" });
+    await authFetch(`/api/positions/${id}/reopen`, { method: "POST" });
     loadPositions();
   }
 
   async function deletePosition(id: string, name: string) {
     if (!confirm(`Permanently delete "${name}"? This can't be undone.`)) return;
-    await fetch(`/api/positions/${id}`, { method: "DELETE" });
+    await authFetch(`/api/positions/${id}`, { method: "DELETE" });
     loadPositions();
   }
 
@@ -659,7 +707,7 @@ function Admin() {
     if (status === "closed") {
       payload.exit_price = editForm.exit_price ? parseFloat(editForm.exit_price) : null;
     }
-    const res = await fetch(`/api/positions/${id}`, {
+    const res = await authFetch(`/api/positions/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),

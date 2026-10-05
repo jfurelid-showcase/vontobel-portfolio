@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { usePortfolio } from "@/lib/portfolioClient";
 
 type Position = {
   id: string;
@@ -58,6 +59,7 @@ function dirLabel(d: string | null | undefined) {
 }
 
 export default function TradeLog() {
+  const { id: portfolioId } = usePortfolio();
   const [positions, setPositions] = useState<Position[]>([]);
   const [baseCapital, setBaseCapital] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -66,6 +68,7 @@ export default function TradeLog() {
     const { data } = await supabase
       .from("portfolio_positions")
       .select("*")
+      .eq("portfolio_id", portfolioId)
       .order("entry_time", { ascending: false });
     setPositions((data as Position[]) ?? []);
     setLoading(false);
@@ -76,16 +79,21 @@ export default function TradeLog() {
     supabase
       .from("portfolio_settings")
       .select("cash_sek")
+      .eq("id", portfolioId)
       .single()
       .then(({ data }) => setBaseCapital(data?.cash_sek ?? null));
     const channel = supabase
-      .channel("trade-log-live")
-      .on("postgres_changes", { event: "*", schema: "public", table: "portfolio_positions" }, load)
+      .channel(`trade-log-live-${portfolioId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "portfolio_positions", filter: `portfolio_id=eq.${portfolioId}` },
+        load
+      )
       .subscribe();
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [portfolioId]);
 
   const summary = useMemo(() => {
     const closed = positions.filter((p) => p.status === "closed");

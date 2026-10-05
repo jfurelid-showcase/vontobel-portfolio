@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { portfolioOfPosition, requireAccess } from "@/lib/auth";
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+  const portfolioId = await portfolioOfPosition(params.id);
+  if (portfolioId == null) return NextResponse.json({ error: "Position not found" }, { status: 404 });
+  const access = await requireAccess(req, portfolioId);
+  if (!access.ok) return access.res;
+
   const body = await req.json().catch(() => ({}));
 
   const { data: pos, error: findErr } = await supabaseAdmin
