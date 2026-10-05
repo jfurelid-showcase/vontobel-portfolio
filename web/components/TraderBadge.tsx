@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { parseStyle } from "@/lib/traderStyle";
 
 const LEVEL_LABELS: Record<string, string> = { noob: "Nybörjare", intermediate: "Mellan", pro: "Proffs" };
 
@@ -30,21 +31,40 @@ export default function TraderBadge() {
   if (!photoUrl && !name && !level && !style) return null;
 
   return (
-    <div className="flex items-center gap-3">
-      {photoUrl && <img src={photoUrl} alt="Trader" className="h-10 w-10 rounded-full object-cover" />}
-      <div>
-        {name && <div className="text-sm font-medium text-neutral-100">{name}</div>}
-        {level && (
-          <div className="text-xs text-neutral-500">
-            Erfarenhetsnivå: <span className="text-neutral-300">{LEVEL_LABELS[level] || level}</span>
-          </div>
-        )}
-        {style && (
-          <div className="mt-0.5 text-xs text-neutral-500">
-            Tradingstil: <span className="text-neutral-300">{style}</span>
-          </div>
-        )}
+    <div>
+      <div className="flex items-center gap-3">
+        {photoUrl && <img src={photoUrl} alt="Trader" className="h-10 w-10 rounded-full object-cover" />}
+        <div>
+          {name && <div className="text-sm font-medium text-neutral-100">{name}</div>}
+          {level && (
+            <div className="text-xs text-neutral-500">
+              Erfarenhetsnivå: <span className="text-neutral-300">{LEVEL_LABELS[level] || level}</span>
+            </div>
+          )}
+        </div>
       </div>
+      {style && (
+        <div className="mt-3 rounded-xl border border-sky-500/30 bg-sky-500/10 px-4 py-3">
+          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-sky-300/80">Tradingstil</div>
+          <p className="whitespace-pre-line break-words text-sm leading-snug text-neutral-100">
+            {parseStyle(style).map((seg, i) =>
+              seg.type === "link" ? (
+                <a
+                  key={i}
+                  href={seg.href}
+                  target="_blank"
+                  rel="noopener noreferrer nofollow"
+                  className="text-sky-300 underline decoration-sky-300/40 underline-offset-2 hover:decoration-sky-300"
+                >
+                  {seg.text}
+                </a>
+              ) : (
+                <span key={i}>{seg.text}</span>
+              )
+            )}
+          </p>
+        </div>
+      )}
     </div>
   );
 }

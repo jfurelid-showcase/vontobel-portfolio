@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { MAX_VISIBLE_LENGTH, RAW_MAX_LENGTH, visibleLength } from "@/lib/traderStyle";
 
 const BUCKET = "trader-photos";
-const MAX_STYLE_LENGTH = 160; // keep in sync with TraderSettings.tsx and the SQL check constraint
 
 // Body: multipart/form-data with optional "photo" (file), "name", and/or
 // "level" ("noob" | "intermediate" | "pro"), and/or "style" (short free-text
-// description of the trader's trading style, max 160 chars). Stored on the single
+// description of the trader's trading style, max 160 visible chars, may contain
+// links). Stored on the single
 // portfolio_settings row (id=1) — per-portfolio, not per-position.
 export async function POST(req: NextRequest) {
   const formData = await req.formData();
@@ -19,8 +20,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid level" }, { status: 400 });
   }
 
-  if (style != null && style.trim().length > MAX_STYLE_LENGTH) {
-    return NextResponse.json({ error: `Tradingstil får vara max ${MAX_STYLE_LENGTH} tecken` }, { status: 400 });
+  if (style != null) {
+    const trimmed = style.trim();
+    if (trimmed.length > RAW_MAX_LENGTH) {
+      return NextResponse.json({ error: "Tradingstil är för lång" }, { status: 400 });
+    }
+    // Links count as their visible label, not their URL.
+    if (visibleLength(trimmed) > MAX_VISIBLE_LENGTH) {
+      return NextResponse.json({ error: `Tradingstil får vara max ${MAX_VISIBLE_LENGTH} synliga tecken` }, { status: 400 });
+    }
   }
 
   const updates: Record<string, unknown> = {};

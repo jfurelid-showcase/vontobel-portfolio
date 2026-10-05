@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { MAX_VISIBLE_LENGTH, RAW_MAX_LENGTH, visibleLength } from "@/lib/traderStyle";
 
 const LEVELS = ["noob", "intermediate", "pro"] as const;
-const MAX_STYLE_LENGTH = 160; // keep in sync with the API route and the SQL check constraint
 
 export default function TraderSettings() {
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
@@ -29,6 +29,9 @@ export default function TraderSettings() {
       setStyle(data?.trader_style ?? "");
     })();
   }, []);
+
+  const styleVisible = visibleLength(style);
+  const styleTooLong = styleVisible > MAX_VISIBLE_LENGTH;
 
   async function save() {
     setSaving(true);
@@ -94,22 +97,29 @@ export default function TraderSettings() {
           <div>
             <div className="mb-1 flex items-baseline justify-between">
               <label className="block text-sm text-neutral-400">Tradingstil</label>
-              <span className={`text-xs ${style.length >= MAX_STYLE_LENGTH ? "text-amber-400" : "text-neutral-600"}`}>
-                {style.length}/{MAX_STYLE_LENGTH}
+              <span
+                className={`text-xs ${
+                  styleTooLong ? "text-red-400" : styleVisible >= MAX_VISIBLE_LENGTH ? "text-amber-400" : "text-neutral-600"
+                }`}
+              >
+                {styleVisible}/{MAX_VISIBLE_LENGTH}
               </span>
             </div>
             <textarea
               value={style}
-              onChange={(e) => setStyle(e.target.value.slice(0, MAX_STYLE_LENGTH))}
-              maxLength={MAX_STYLE_LENGTH}
-              rows={2}
-              placeholder="T.ex. Swing trading i teknikaktier, håller 2–10 dagar"
+              onChange={(e) => setStyle(e.target.value.slice(0, RAW_MAX_LENGTH))}
+              rows={3}
+              placeholder="T.ex. Swing trading i teknikaktier, 2–10 dagar. Se [min strategi](https://example.com)"
               className="w-full resize-none rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-sm outline-none focus:border-neutral-500"
             />
+            <p className="mt-1 text-xs text-neutral-600">
+              Länkar: skriv en vanlig adress (https://…) eller <code className="text-neutral-400">[text](https://…)</code>. I
+              andra fallet räknas bara texten mellan hakparenteserna mot gränsen.
+            </p>
           </div>
           <button
             onClick={save}
-            disabled={saving}
+            disabled={saving || styleTooLong}
             className="rounded-lg bg-neutral-100 px-4 py-1.5 text-sm font-medium text-neutral-900 hover:bg-white disabled:opacity-50"
           >
             {saving ? "Sparar…" : "Spara"}
