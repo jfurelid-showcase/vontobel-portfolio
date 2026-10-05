@@ -34,10 +34,10 @@ export default function TraderBadge() {
           // Country flag sits as a small badge on the photo's lower-right corner.
           <div className="relative shrink-0">
             <img src={photoUrl} alt="Trader" className="h-10 w-10 rounded-full object-cover" />
-            {country && <Flag code={country} className="absolute -bottom-1 -right-1.5 h-3.5 w-auto rounded-[3px] ring-2 ring-neutral-950" />}
+            {country && <Flag code={country} className="absolute -bottom-0.5 -right-0.5 h-4 w-4 ring-2 ring-neutral-950" />}
           </div>
         ) : (
-          country && <Flag code={country} className="h-6 w-auto shrink-0 rounded-[3px]" />
+          country && <Flag code={country} className="h-7 w-7 shrink-0 ring-1 ring-white/10" />
         )}
         <div>
           {name && <div className="text-sm font-medium text-neutral-100">{name}</div>}

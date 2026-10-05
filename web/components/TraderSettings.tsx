@@ -70,7 +70,7 @@ export default function TraderSettings() {
           <div>
             <label className="mb-1 block text-sm text-neutral-400">Land</label>
             <div className="flex items-center gap-2">
-              {country && <Flag code={country} className="h-4 w-auto shrink-0 rounded-[2px]" />}
+              {country && <Flag code={country} className="h-5 w-5 shrink-0 ring-1 ring-white/10" />}
               <select
                 value={country}
                 onChange={(e) => setCountry(e.target.value)}
