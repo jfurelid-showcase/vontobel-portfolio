@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { supabase } from "@/lib/supabaseClient";
+import Flag from "@/components/Flag";
+import { fetchTraderRow } from "@/lib/traderSettings";
 import { parseStyle } from "@/lib/traderStyle";
 
 const LEVEL_LABELS: Record<string, string> = { noob: "Nybörjare", intermediate: "Mellan", pro: "Proffs" };
@@ -11,29 +12,33 @@ export default function TraderBadge() {
   const [name, setName] = useState<string | null>(null);
   const [level, setLevel] = useState<string | null>(null);
   const [style, setStyle] = useState<string | null>(null);
+  const [country, setCountry] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
-      // If the trader_style column isn't in the database yet, fall back to the
-      // original columns instead of hiding the whole badge.
-      let res = await supabase.from("portfolio_settings").select("trader_photo_url, trader_name, trader_level, trader_style").single();
-      if (res.error) {
-        res = await supabase.from("portfolio_settings").select("trader_photo_url, trader_name, trader_level").single();
-      }
-      const data = res.data as { trader_photo_url?: string; trader_name?: string; trader_level?: string; trader_style?: string } | null;
+      const data = await fetchTraderRow();
       setPhotoUrl(data?.trader_photo_url ?? null);
       setName(data?.trader_name ?? null);
       setLevel(data?.trader_level ?? null);
       setStyle(data?.trader_style ?? null);
+      setCountry(data?.trader_country ?? null);
     })();
   }, []);
 
-  if (!photoUrl && !name && !level && !style) return null;
+  if (!photoUrl && !name && !level && !style && !country) return null;
 
   return (
     <div>
       <div className="flex items-center gap-3">
-        {photoUrl && <img src={photoUrl} alt="Trader" className="h-10 w-10 rounded-full object-cover" />}
+        {photoUrl ? (
+          // Country flag sits as a small badge on the photo's lower-right corner.
+          <div className="relative shrink-0">
+            <img src={photoUrl} alt="Trader" className="h-10 w-10 rounded-full object-cover" />
+            {country && <Flag code={country} className="absolute -bottom-1 -right-1.5 h-3.5 w-auto rounded-[3px] ring-2 ring-neutral-950" />}
+          </div>
+        ) : (
+          country && <Flag code={country} className="h-6 w-auto shrink-0 rounded-[3px]" />
+        )}
         <div>
           {name && <div className="text-sm font-medium text-neutral-100">{name}</div>}
           {level && (

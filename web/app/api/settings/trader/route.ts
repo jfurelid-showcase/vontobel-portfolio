@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { isCountryCode } from "@/lib/countries";
 import { MAX_VISIBLE_LENGTH, RAW_MAX_LENGTH, visibleLength } from "@/lib/traderStyle";
 
 const BUCKET = "trader-photos";
@@ -15,6 +16,7 @@ export async function POST(req: NextRequest) {
   const level = formData.get("level") as string | null;
   const name = formData.get("name") as string | null;
   const style = formData.get("style") as string | null;
+  const country = formData.get("country") as string | null;
 
   if (level && !["noob", "intermediate", "pro"].includes(level)) {
     return NextResponse.json({ error: "Invalid level" }, { status: 400 });
@@ -31,10 +33,17 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // "" clears the country; anything else must be a real ISO 3166-1 alpha-2 code.
+  const countryCode = country != null ? country.trim().toUpperCase() : null;
+  if (countryCode && !isCountryCode(countryCode)) {
+    return NextResponse.json({ error: "Ogiltigt land" }, { status: 400 });
+  }
+
   const updates: Record<string, unknown> = {};
   if (level) updates.trader_level = level;
   if (name != null) updates.trader_name = name.trim() || null;
   if (style != null) updates.trader_style = style.trim() || null;
+  if (countryCode != null) updates.trader_country = countryCode || null;
 
   if (file && file.size > 0) {
     const arrayBuffer = await file.arrayBuffer();

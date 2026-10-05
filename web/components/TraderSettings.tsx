@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { supabase } from "@/lib/supabaseClient";
+import { useEffect, useMemo, useState } from "react";
+import Flag from "@/components/Flag";
+import { countryOptions } from "@/lib/countries";
+import { fetchTraderRow } from "@/lib/traderSettings";
 import { MAX_VISIBLE_LENGTH, RAW_MAX_LENGTH, visibleLength } from "@/lib/traderStyle";
 
 const LEVELS = ["noob", "intermediate", "pro"] as const;
@@ -11,22 +13,19 @@ export default function TraderSettings() {
   const [name, setName] = useState("");
   const [level, setLevel] = useState<string>("intermediate");
   const [style, setStyle] = useState("");
+  const [country, setCountry] = useState("");
+  const countries = useMemo(() => countryOptions("sv"), []);
   const [file, setFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     (async () => {
-      // If the trader_style column hasn't been added to the database yet,
-      // fall back to the original columns so the rest of the form still loads.
-      let res = await supabase.from("portfolio_settings").select("trader_photo_url, trader_name, trader_level, trader_style").single();
-      if (res.error) {
-        res = await supabase.from("portfolio_settings").select("trader_photo_url, trader_name, trader_level").single();
-      }
-      const data = res.data as { trader_photo_url?: string; trader_name?: string; trader_level?: string; trader_style?: string } | null;
+      const data = await fetchTraderRow();
       setPhotoUrl(data?.trader_photo_url ?? null);
       setName(data?.trader_name ?? "");
       setLevel(data?.trader_level ?? "intermediate");
       setStyle(data?.trader_style ?? "");
+      setCountry(data?.trader_country ?? "");
     })();
   }, []);
 
@@ -40,6 +39,7 @@ export default function TraderSettings() {
     formData.append("name", name);
     formData.append("level", level);
     formData.append("style", style);
+    formData.append("country", country);
 
     const res = await fetch("/api/settings/trader", { method: "POST", body: formData });
     setSaving(false);
@@ -66,6 +66,24 @@ export default function TraderSettings() {
               placeholder="Trader's name"
               className="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-sm outline-none focus:border-neutral-500"
             />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm text-neutral-400">Land</label>
+            <div className="flex items-center gap-2">
+              {country && <Flag code={country} className="h-4 w-auto shrink-0 rounded-[2px]" />}
+              <select
+                value={country}
+                onChange={(e) => setCountry(e.target.value)}
+                className="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-sm outline-none focus:border-neutral-500"
+              >
+                <option value="">Inget land</option>
+                {countries.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
           <div>
             <label className="mb-1 block text-sm text-neutral-400">Foto</label>
