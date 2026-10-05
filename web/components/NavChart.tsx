@@ -424,6 +424,51 @@ export default function NavChart({ history: _history, portfolioName }: { history
       drawArea(pts, overallColor, padding.top + plotH);
     }
 
+    // Where each visible trade sits on the curve (nearest point in time).
+    const tradeAnchors =
+      isDailyNow && visibleTrades.length > 0
+        ? visibleTrades.map((t) => {
+            const tTime = new Date(t.ts).getTime();
+            let nearest = 0;
+            let bestDiff = Infinity;
+            points.forEach((p, idx) => {
+              const diff = Math.abs(new Date(p.ts).getTime() - tTime);
+              if (diff < bestDiff) {
+                bestDiff = diff;
+                nearest = idx;
+              }
+            });
+            return { mx: xx(nearest), cy: yy(points[nearest].nav) };
+          })
+        : [];
+
+    // Same graphics as on screen: a dotted guide from the curve down to the
+    // marker row, plus a ring on the curve where the trade happened. Drawn
+    // before the axis labels so label text always stays readable on top.
+    tradeAnchors.forEach((a, i) => {
+      const t = visibleTrades[i];
+      const color = t.kind === "open" ? "#38bdf8" : t.pl != null && t.pl >= 0 ? "#34d399" : "#f87171";
+      ctx.save();
+      ctx.globalAlpha = 0.55;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 3]);
+      ctx.beginPath();
+      ctx.moveTo(a.mx, a.cy);
+      ctx.lineTo(a.mx, svgH - 9 - 6 - 17); // stop above the marker's number tag
+      ctx.stroke();
+      ctx.restore();
+      ctx.setLineDash([]);
+
+      ctx.fillStyle = "#171717";
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(a.mx, a.cy, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    });
+
     const X_TICKS = 5;
     const seen = new Set<string>();
     const xLabels: { idx: number; label: string }[] = [];
@@ -447,21 +492,11 @@ export default function NavChart({ history: _history, portfolioName }: { history
 
     if (isDailyNow && visibleTrades.length > 0) {
       visibleTrades.forEach((t, i) => {
-        const tTime = new Date(t.ts).getTime();
-        let nearest = 0;
-        let bestDiff = Infinity;
-        points.forEach((p, idx) => {
-          const diff = Math.abs(new Date(p.ts).getTime() - tTime);
-          if (diff < bestDiff) {
-            bestDiff = diff;
-            nearest = idx;
-          }
-        });
-        const mx = xx(nearest);
+        const mx = tradeAnchors[i].mx;
         const my = svgH - 9;
         const isOpen = t.kind === "open";
         const color = isOpen ? "#38bdf8" : t.pl != null && t.pl >= 0 ? "#34d399" : "#f87171";
-        const size = 5;
+        const size = 6;
         ctx.fillStyle = color;
         ctx.strokeStyle = "#171717";
         ctx.lineWidth = 1;
