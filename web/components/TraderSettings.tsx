@@ -4,24 +4,30 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 const LEVELS = ["noob", "intermediate", "pro"] as const;
+const MAX_STYLE_LENGTH = 160; // keep in sync with the API route and the SQL check constraint
 
 export default function TraderSettings() {
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [level, setLevel] = useState<string>("intermediate");
+  const [style, setStyle] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    supabase
-      .from("portfolio_settings")
-      .select("trader_photo_url, trader_name, trader_level")
-      .single()
-      .then(({ data }) => {
-        setPhotoUrl(data?.trader_photo_url ?? null);
-        setName(data?.trader_name ?? "");
-        setLevel(data?.trader_level ?? "intermediate");
-      });
+    (async () => {
+      // If the trader_style column hasn't been added to the database yet,
+      // fall back to the original columns so the rest of the form still loads.
+      let res = await supabase.from("portfolio_settings").select("trader_photo_url, trader_name, trader_level, trader_style").single();
+      if (res.error) {
+        res = await supabase.from("portfolio_settings").select("trader_photo_url, trader_name, trader_level").single();
+      }
+      const data = res.data as { trader_photo_url?: string; trader_name?: string; trader_level?: string; trader_style?: string } | null;
+      setPhotoUrl(data?.trader_photo_url ?? null);
+      setName(data?.trader_name ?? "");
+      setLevel(data?.trader_level ?? "intermediate");
+      setStyle(data?.trader_style ?? "");
+    })();
   }, []);
 
   async function save() {
@@ -30,6 +36,7 @@ export default function TraderSettings() {
     if (file) formData.append("photo", file);
     formData.append("name", name);
     formData.append("level", level);
+    formData.append("style", style);
 
     const res = await fetch("/api/settings/trader", { method: "POST", body: formData });
     setSaving(false);
@@ -83,6 +90,22 @@ export default function TraderSettings() {
                 </button>
               ))}
             </div>
+          </div>
+          <div>
+            <div className="mb-1 flex items-baseline justify-between">
+              <label className="block text-sm text-neutral-400">Tradingstil</label>
+              <span className={`text-xs ${style.length >= MAX_STYLE_LENGTH ? "text-amber-400" : "text-neutral-600"}`}>
+                {style.length}/{MAX_STYLE_LENGTH}
+              </span>
+            </div>
+            <textarea
+              value={style}
+              onChange={(e) => setStyle(e.target.value.slice(0, MAX_STYLE_LENGTH))}
+              maxLength={MAX_STYLE_LENGTH}
+              rows={2}
+              placeholder="T.ex. Swing trading i teknikaktier, håller 2–10 dagar"
+              className="w-full resize-none rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-sm outline-none focus:border-neutral-500"
+            />
           </div>
           <button
             onClick={save}
