@@ -103,12 +103,24 @@ async function fetchLivePrice(insref) {
 }
 
 async function tick() {
-  const { data: openPositionsRaw, error } = await supabase
+  // Fetch EVERY position's status/prices in one single query, so there is
+  // one consistent snapshot in time. Splitting this into two separate
+  // queries (open positions first, closed positions much later, after
+  // several seconds of price-fetching in between) left a race window: if a
+  // position got closed by the admin UI in between those two queries, it
+  // was still "open" when the first query ran but already "closed" by the
+  // time the second one ran — so it got counted TWICE in that tick's P/L
+  // (once via its stale open-position price, once via its exit price),
+  // producing a brief, self-correcting NAV spike exactly when a position
+  // was closed. A single query makes that impossible: each row's status is
+  // read once, atomically, so it can only ever land in one bucket.
+  const { data: allPositionsRaw, error } = await supabase
     .from("portfolio_positions")
-    .select("id, isin, entry_price, stake_sek, current_price")
-    .eq("status", "open");
+    .select("id, isin, status, entry_price, stake_sek, current_price, exit_price");
   if (error) throw error;
-  const openPositions = openPositionsRaw || [];
+  const allPositions = allPositionsRaw || [];
+  const openPositions = allPositions.filter((p) => p.status === "open");
+  const closedPositions = allPositions.filter((p) => p.status === "closed");
 
   const now = new Date().toISOString();
   const priceByIsin = new Map();
@@ -174,11 +186,7 @@ async function tick() {
     await supabase.from("price_ticks").insert({ position_id: pos.id, price: freshPrice, ts: now });
   }
 
-  const { data: closedPositions } = await supabase
-    .from("portfolio_positions")
-    .select("stake_sek, entry_price, exit_price")
-    .eq("status", "closed");
-  for (const pos of closedPositions || []) {
+  for (const pos of closedPositions) {
     if (pos.exit_price != null) {
       totalPl += pos.stake_sek * ((pos.exit_price - pos.entry_price) / pos.entry_price);
     }
