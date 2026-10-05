@@ -126,6 +126,27 @@ export default function NavChart({ history: _history, portfolioName }: { history
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const [trades, setTrades] = useState<TradeEvent[]>([]);
   const [hoverTradeIdx, setHoverTradeIdx] = useState<number | null>(null);
+  const [showTrades, setShowTrades] = useState(true);
+  // What the chart (and its PNG export) actually shows — empty when the
+  // user has switched position markers off.
+  const visibleTrades = useMemo(() => (showTrades ? trades : []), [showTrades, trades]);
+
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem("navchart:showTrades") === "0") setShowTrades(false);
+    } catch {}
+  }, []);
+
+  function toggleShowTrades() {
+    setShowTrades((v) => {
+      const next = !v;
+      try {
+        window.localStorage.setItem("navchart:showTrades", next ? "1" : "0");
+      } catch {}
+      return next;
+    });
+    setHoverTradeIdx(null);
+  }
   const [raw, setRaw] = useState<NavPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const lastTsRef = useRef<string | null>(null);
@@ -267,7 +288,7 @@ export default function NavChart({ history: _history, portfolioName }: { history
     const max = ticks[ticks.length - 1] + step * 0.15;
     const spread = max - min || 1;
 
-    const hasMarkerRowNow = isDailyNow && trades.length > 0;
+    const hasMarkerRowNow = isDailyNow && visibleTrades.length > 0;
     const svgW = 800;
     const svgH = 220;
     const padding = { top: 16, right: 12, bottom: hasMarkerRowNow ? 46 : 24, left: 52 };
@@ -286,7 +307,7 @@ export default function NavChart({ history: _history, portfolioName }: { history
     // position) — the rest of what the on-screen hover shows (name, price,
     // value, result) goes in a numbered legend below, since a static image
     // can't be hovered.
-    const dayTrades = isDailyNow ? trades : [];
+    const dayTrades = isDailyNow ? visibleTrades : [];
     const legendLineH = 15;
     const legendH = dayTrades.length > 0 ? 10 + dayTrades.length * legendLineH + 6 : 0;
 
@@ -424,8 +445,8 @@ export default function NavChart({ history: _history, portfolioName }: { history
     });
     ctx.textAlign = "left";
 
-    if (isDailyNow && trades.length > 0) {
-      trades.forEach((t, i) => {
+    if (isDailyNow && visibleTrades.length > 0) {
+      visibleTrades.forEach((t, i) => {
         const tTime = new Date(t.ts).getTime();
         let nearest = 0;
         let bestDiff = Infinity;
@@ -535,7 +556,24 @@ export default function NavChart({ history: _history, portfolioName }: { history
   }
 
   const header = (
-    <div className="mb-3 flex justify-end gap-2">
+    <div className="mb-3 flex flex-wrap justify-end gap-2">
+      {range === "1D" && (
+        <button
+          onClick={toggleShowTrades}
+          aria-pressed={showTrades}
+          title={showTrades ? "Dölj affärer i grafen" : "Visa affärer i grafen"}
+          className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium transition ${
+            showTrades
+              ? "border-sky-500/50 bg-sky-500/10 text-sky-300"
+              : "border-neutral-800 bg-neutral-950 text-neutral-500 hover:text-neutral-200"
+          }`}
+        >
+          <svg width="11" height="11" viewBox="0 0 12 12" fill="currentColor">
+            <path d="M6 1 11 10H1z" />
+          </svg>
+          Affärer
+        </button>
+      )}
       <button
         onClick={handleExport}
         title="Exportera graf som PNG"
@@ -573,7 +611,7 @@ export default function NavChart({ history: _history, portfolioName }: { history
 
     const width = 800;
     const height = isMobile ? 320 : 220;
-    const hasMarkerRow = range === "1D" && trades.length > 0;
+    const hasMarkerRow = range === "1D" && visibleTrades.length > 0;
     const padding = { top: 16, right: 12, bottom: hasMarkerRow ? 40 : 24, left: 52 };
     const plotW = width - padding.left - padding.right;
     const plotH = height - padding.top - padding.bottom;
@@ -692,7 +730,7 @@ export default function NavChart({ history: _history, portfolioName }: { history
     // already downsampled, so this stays a small, readable set of marks
     // rather than one per raw 10s tick).
     const tradeMarkers = isDaily
-      ? trades.map((t) => {
+      ? visibleTrades.map((t) => {
           const tTime = new Date(t.ts).getTime();
           let nearest = 0;
           let bestDiff = Infinity;
@@ -703,7 +741,7 @@ export default function NavChart({ history: _history, portfolioName }: { history
               nearest = i;
             }
           }
-          return { ...t, mx: x(nearest) };
+          return { ...t, mx: x(nearest), cy: y(points[nearest].nav) };
         })
       : [];
 
@@ -713,6 +751,21 @@ export default function NavChart({ history: _history, portfolioName }: { history
       const svgX = frac * width;
       const idx = Math.round(((svgX - padding.left) / plotW) * (points.length - 1));
       setHoverIdx(Math.min(points.length - 1, Math.max(0, idx)));
+      // Snap to a trade marker when the pointer is close to one in time, so
+      // its guide line and details show up instantly while sweeping across
+      // the chart — no need to find the tiny marker row first.
+      if (tradeMarkers.length > 0) {
+        let best = -1;
+        let bestDx = 10; // svg units (~1% of the width)
+        tradeMarkers.forEach((t, i) => {
+          const dx = Math.abs(t.mx - svgX);
+          if (dx < bestDx) {
+            bestDx = dx;
+            best = i;
+          }
+        });
+        setHoverTradeIdx(best >= 0 ? best : null);
+      }
     }
 
     return (
@@ -794,7 +847,7 @@ export default function NavChart({ history: _history, portfolioName }: { history
             </text>
           ))}
 
-          {hover && (
+          {hover && hoverTradeIdx == null && (
             <g>
               <line x1={hover.hx} x2={hover.hx} y1={padding.top} y2={padding.top + plotH} stroke="#52525b" strokeWidth="1" strokeDasharray="3 3" />
               <circle cx={hover.hx} cy={hover.hy} r="3.5" fill={hover.color} stroke="#171717" strokeWidth="1.5" />
@@ -824,7 +877,7 @@ export default function NavChart({ history: _history, portfolioName }: { history
               const my = height - 9;
               const isOpen = t.kind === "open";
               const color = isOpen ? "#38bdf8" : t.pl != null && t.pl >= 0 ? UP_COLOR : DOWN_COLOR;
-              const size = 5;
+              const size = 6;
               const points_ = isOpen
                 ? `${t.mx - size},${my + size} ${t.mx + size},${my + size} ${t.mx},${my - size}` // up-triangle
                 : `${t.mx - size},${my - size} ${t.mx + size},${my - size} ${t.mx},${my + size}`; // down-triangle
@@ -839,17 +892,26 @@ export default function NavChart({ history: _history, portfolioName }: { history
                   onTouchCancel={() => setHoverTradeIdx(null)}
                   style={{ cursor: "pointer" }}
                 >
-                  {/* Thin guide line up to the curve, so it's clear which
-                      point in time the marker belongs to — only shown while
-                      hovering that marker, to keep the row calm otherwise. */}
-                  {isHovered && (
-                    <line x1={t.mx} x2={t.mx} y1={padding.top} y2={my - size - 2} stroke={color} strokeWidth="1" strokeDasharray="2 3" opacity="0.6" />
-                  )}
-                  <circle cx={t.mx} cy={my} r="9" fill="transparent" />
+                  {/* Dotted guide from the curve point down to the marker —
+                      always visible, so it's clear at a glance which moment
+                      each marker belongs to; brighter while hovered. */}
+                  <line
+                    x1={t.mx}
+                    x2={t.mx}
+                    y1={t.cy}
+                    y2={my - size - 1}
+                    stroke={color}
+                    strokeWidth={isHovered ? 1.5 : 1}
+                    strokeDasharray="2 3"
+                    opacity={isHovered ? 1 : 0.55}
+                  />
+                  {/* Ring on the curve itself where the trade happened */}
+                  <circle cx={t.mx} cy={t.cy} r={isHovered ? 5 : 3.5} fill="#171717" stroke={color} strokeWidth="2" />
+                  <circle cx={t.mx} cy={my} r="12" fill="transparent" />
                   <polygon
                     points={points_}
                     fill={color}
-                    stroke={isHovered ? "#e4e4e7" : "#171717"}
+                    stroke={isHovered ? "#ffffff" : "#171717"}
                     strokeWidth={isHovered ? "1.5" : "1"}
                   />
                 </g>
@@ -914,11 +976,20 @@ export default function NavChart({ history: _history, portfolioName }: { history
             height={plotH}
             fill="transparent"
             onMouseMove={(e) => handlePointer(e.clientX, e.currentTarget)}
-            onMouseLeave={() => setHoverIdx(null)}
+            onMouseLeave={() => {
+              setHoverIdx(null);
+              setHoverTradeIdx(null);
+            }}
             onTouchStart={(e) => handlePointer(e.touches[0].clientX, e.currentTarget)}
             onTouchMove={(e) => handlePointer(e.touches[0].clientX, e.currentTarget)}
-            onTouchEnd={() => setHoverIdx(null)}
-            onTouchCancel={() => setHoverIdx(null)}
+            onTouchEnd={() => {
+              setHoverIdx(null);
+              setHoverTradeIdx(null);
+            }}
+            onTouchCancel={() => {
+              setHoverIdx(null);
+              setHoverTradeIdx(null);
+            }}
             style={{ cursor: "crosshair" }}
           />
         </svg>
@@ -930,7 +1001,7 @@ export default function NavChart({ history: _history, portfolioName }: { history
         )}
       </>
     );
-  }, [points, range, hoverIdx, trades, hoverTradeIdx, isMobile]);
+  }, [points, range, hoverIdx, visibleTrades, hoverTradeIdx, isMobile]);
 
   return (
     <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
