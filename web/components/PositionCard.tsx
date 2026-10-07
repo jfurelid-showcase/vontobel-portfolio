@@ -21,6 +21,15 @@ type Position = {
   exit_price: number | null;
   note: string | null;
   podcast_episode: string | null;
+  // Automatic stop loss / target (null/undefined before the database has them).
+  auto_stop?: boolean | null;
+  auto_target?: boolean | null;
+  close_reason?: string | null;
+};
+
+const CLOSE_REASON_TEXT: Record<string, string> = {
+  stop_loss: "stängdes automatiskt vid stop loss",
+  take_profit: "stängdes automatiskt vid målet",
 };
 
 function pct(from: number, to: number) {
@@ -276,12 +285,20 @@ export default function PositionCard({ p }: { p: Position }) {
 
       <div className="grid grid-cols-2 gap-y-3 text-sm">
         <Stat label="Ingångspris" value={p.entry_price} />
-        <Stat label="Stop loss" value={p.stop_loss} sub={toStop != null ? `${toStop.toFixed(2)}%` : undefined} />
+        <Stat
+          label="Stop loss"
+          value={p.stop_loss}
+          sub={toStop != null ? `${toStop.toFixed(2)}%` : undefined}
+          auto={!!p.auto_stop}
+          hit={p.close_reason === "stop_loss"}
+        />
         <Stat label={p.status === "closed" ? "Utgångspris" : "Pris"} value={price} />
         <Stat
           label="Mål"
           value={p.target_price}
           sub={toTarget != null ? `+${toTarget.toFixed(2)}%` : undefined}
+          auto={!!p.auto_target}
+          hit={p.close_reason === "take_profit"}
         />
       </div>
 
@@ -290,6 +307,9 @@ export default function PositionCard({ p }: { p: Position }) {
         {p.current_updated_at && p.status === "open" && (
           <> · uppdaterad {new Date(p.current_updated_at).toLocaleTimeString("sv-SE")}</>
         )}
+        {p.status === "closed" && p.close_reason && CLOSE_REASON_TEXT[p.close_reason] && (
+          <> · {CLOSE_REASON_TEXT[p.close_reason]}</>
+        )}
       </div>
 
       <TradeNote note={p.note} podcastEpisode={p.podcast_episode} />
@@ -297,10 +317,35 @@ export default function PositionCard({ p }: { p: Position }) {
   );
 }
 
-function Stat({ label, value, sub }: { label: string; value: number | null; sub?: string }) {
+// `auto`: the position will close by itself at this level. `hit`: it did.
+function Stat({
+  label,
+  value,
+  sub,
+  auto,
+  hit,
+}: {
+  label: string;
+  value: number | null;
+  sub?: string;
+  auto?: boolean;
+  hit?: boolean;
+}) {
   return (
     <div>
-      <div className="text-neutral-500">{label}</div>
+      <div className="flex items-center gap-1.5 text-neutral-500">
+        {label}
+        {(auto || hit) && (
+          <span
+            title={hit ? "Positionen stängdes av den här nivån" : "Positionen stängs automatiskt vid den här nivån"}
+            className={`rounded px-1 py-px text-[9px] font-semibold uppercase tracking-wide ${
+              hit ? "bg-amber-500/20 text-amber-300" : "bg-sky-500/15 text-sky-300"
+            }`}
+          >
+            {hit ? "Utlöst" : "Auto"}
+          </span>
+        )}
+      </div>
       <div className="font-medium text-neutral-100">
         {fmt2(value)} {sub && <span className="ml-1 text-xs text-neutral-500">({sub})</span>}
       </div>

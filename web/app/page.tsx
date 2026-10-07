@@ -16,6 +16,7 @@ import TabMenu from "@/components/TabMenu";
 import PositionsExportButton from "@/components/PositionsExport";
 import AdminTab from "@/components/AdminTab";
 import { PortfolioProvider, usePortfolio } from "@/lib/portfolioClient";
+import { useResync } from "@/lib/useResync";
 type Position = Parameters<typeof PositionCard>[0]["p"] & {
   stake_sek: number;
   quantity: number | null;
@@ -73,6 +74,20 @@ function HomeInner() {
     if (t === "trades" || (t === "admin" && !isEmbed)) setTab(t);
   }, []);
 
+  // Keep the address bar in step with the tab you're on, so a reload (or a
+  // copied link) opens the same tab again. Without this the tab only lived in
+  // memory, and a private link that ends in "&tab=admin" sent you back to the
+  // admin tab on every reload no matter where you had navigated. The
+  // dashboard is the default, so it carries no "tab" at all.
+  function changeTab(next: "dashboard" | "trades" | "admin") {
+    setTab(next);
+    const params = new URLSearchParams(window.location.search);
+    if (next === "dashboard") params.delete("tab");
+    else params.set("tab", next);
+    const qs = params.toString();
+    window.history.replaceState(null, "", window.location.pathname + (qs ? `?${qs}` : "") + window.location.hash);
+  }
+
   // Until we know which portfolio this link points at, show nothing that
   // could flash another portfolio's data.
   if (!portfolio.ready) {
@@ -124,7 +139,7 @@ function HomeInner() {
               ).map(([key, label]) => (
                 <button
                   key={key}
-                  onClick={() => setTab(key)}
+                  onClick={() => changeTab(key)}
                   className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${
                     tab === key ? "bg-neutral-100 text-neutral-900" : "text-neutral-400 hover:text-neutral-100"
                   }`}
@@ -133,7 +148,7 @@ function HomeInner() {
                 </button>
               ))}
             </div>
-            <TabMenu tab={tab} setTab={setTab} adminLabel={adminLabel} />
+            <TabMenu tab={tab} setTab={changeTab} adminLabel={adminLabel} />
             {/* Desktop: Share sits in this same row. Mobile: it's hidden here
                 and shown instead on its own row below, so the hamburger can
                 share the header row with the title. */}
@@ -212,6 +227,14 @@ function Dashboard() {
     ]);
     setRefNavs({ today, month, year, inception });
   }
+
+  // Back on the page after it was in the background: prices, positions and the
+  // statistics may be minutes old, and the live-update connection may have been
+  // paused, so refresh everything now instead of waiting for the next event.
+  useResync(() => {
+    loadAll();
+    loadReferenceNavs();
+  });
 
   useEffect(() => {
     loadAll();
@@ -531,6 +554,8 @@ function PortfolioAdmin() {
     entry_price: "",
     stop_loss: "",
     target_price: "",
+    auto_stop: false,
+    auto_target: false,
     quantity: "100",
     note: "",
     podcast_episode: "",
@@ -637,6 +662,9 @@ function PortfolioAdmin() {
         entry_price: parseFloat(form.entry_price),
         stop_loss: form.stop_loss ? parseFloat(form.stop_loss) : null,
         target_price: form.target_price ? parseFloat(form.target_price) : null,
+        // Automatic closing only makes sense with a level to close at.
+        auto_stop: form.auto_stop && parseFloat(form.stop_loss) > 0,
+        auto_target: form.auto_target && parseFloat(form.target_price) > 0,
         quantity: parseFloat(form.quantity) || 0,
         note: form.note || null,
         podcast_episode: form.podcast_episode || null,
@@ -646,7 +674,16 @@ function PortfolioAdmin() {
     if (res.ok) {
       setSelected(null);
       setQuery("");
-      setForm({ entry_price: "", stop_loss: "", target_price: "", quantity: "100", note: "", podcast_episode: "" });
+      setForm({
+        entry_price: "",
+        stop_loss: "",
+        target_price: "",
+        auto_stop: false,
+        auto_target: false,
+        quantity: "100",
+        note: "",
+        podcast_episode: "",
+      });
       loadPositions();
     } else {
       alert((await res.json()).error || "Failed to add position");
@@ -677,6 +714,8 @@ function PortfolioAdmin() {
     quantity: "",
     stop_loss: "",
     target_price: "",
+    auto_stop: false,
+    auto_target: false,
     exit_price: "",
     note: "",
     podcast_episode: "",
@@ -689,6 +728,8 @@ function PortfolioAdmin() {
       quantity: String(p.quantity ?? ""),
       stop_loss: String(p.stop_loss ?? ""),
       target_price: String(p.target_price ?? ""),
+      auto_stop: !!p.auto_stop,
+      auto_target: !!p.auto_target,
       exit_price: String(p.exit_price ?? ""),
       note: p.note ?? "",
       podcast_episode: p.podcast_episode ?? "",
@@ -706,6 +747,10 @@ function PortfolioAdmin() {
     };
     if (status === "closed") {
       payload.exit_price = editForm.exit_price ? parseFloat(editForm.exit_price) : null;
+    } else {
+      // Open positions only; the server writes these only if they changed.
+      payload.auto_stop = editForm.auto_stop && parseFloat(editForm.stop_loss) > 0;
+      payload.auto_target = editForm.auto_target && parseFloat(editForm.target_price) > 0;
     }
     const res = await authFetch(`/api/positions/${id}`, {
       method: "PATCH",
@@ -896,6 +941,13 @@ function PortfolioAdmin() {
                 className="input"
               />
             </Field>
+            <AutoCloseOptions
+              stop={form.stop_loss}
+              target={form.target_price}
+              autoStop={form.auto_stop}
+              autoTarget={form.auto_target}
+              onChange={(patch) => setForm({ ...form, ...patch })}
+            />
             <Field label="Podcast episode" full>
               <input
                 value={form.podcast_episode}
@@ -962,6 +1014,15 @@ function PortfolioAdmin() {
                         className="input"
                       />
                     </Field>
+                    {p.status === "open" && (
+                      <AutoCloseOptions
+                        stop={editForm.stop_loss}
+                        target={editForm.target_price}
+                        autoStop={editForm.auto_stop}
+                        autoTarget={editForm.auto_target}
+                        onChange={(patch) => setEditForm({ ...editForm, ...patch })}
+                      />
+                    )}
                     {p.status === "closed" && (
                       <Field label="Exit price">
                         <input
@@ -1014,7 +1075,11 @@ function PortfolioAdmin() {
                     <div className="text-sm text-neutral-400">
                       {p.quantity ? `${p.quantity} contracts · ` : ""}Entry {p.entry_price} → Now{" "}
                       {p.status === "closed" ? p.exit_price ?? "–" : p.current_price ?? "–"} · SL{" "}
-                      {p.stop_loss ?? "–"} · Target {p.target_price ?? "–"}
+                      {p.stop_loss ?? "–"}
+                      {p.status === "open" && p.auto_stop ? " (auto)" : ""} · Target {p.target_price ?? "–"}
+                      {p.status === "open" && p.auto_target ? " (auto)" : ""}
+                      {p.status === "closed" && p.close_reason === "stop_loss" ? " · stängd automatiskt vid stop loss" : ""}
+                      {p.status === "closed" && p.close_reason === "take_profit" ? " · stängd automatiskt vid målet" : ""}
                     </div>
                     <TradeNote note={p.note} podcastEpisode={p.podcast_episode} />
                   </div>
@@ -1073,6 +1138,55 @@ function PortfolioAdmin() {
         }
       `}</style>
     </>
+  );
+}
+
+// The two "close automatically" switches. Each only works together with a price
+// in the matching field above, so it is disabled (and shown off) until there is one.
+function AutoCloseOptions({
+  stop,
+  target,
+  autoStop,
+  autoTarget,
+  onChange,
+}: {
+  stop: string;
+  target: string;
+  autoStop: boolean;
+  autoTarget: boolean;
+  onChange: (patch: { auto_stop?: boolean; auto_target?: boolean }) => void;
+}) {
+  const hasStop = parseFloat(stop) > 0;
+  const hasTarget = parseFloat(target) > 0;
+  const row = (enabled: boolean) => `flex items-center gap-2 text-sm ${enabled ? "text-neutral-200" : "text-neutral-600"}`;
+  return (
+    <div className="col-span-2 rounded-lg border border-neutral-800 bg-neutral-950/40 p-3">
+      <div className="mb-2 text-sm font-medium text-neutral-300">Automatisk stängning</div>
+      <div className="space-y-1.5">
+        <label className={row(hasStop)}>
+          <input
+            type="checkbox"
+            checked={autoStop && hasStop}
+            disabled={!hasStop}
+            onChange={(e) => onChange({ auto_stop: e.target.checked })}
+          />
+          Stäng automatiskt vid stop loss
+        </label>
+        <label className={row(hasTarget)}>
+          <input
+            type="checkbox"
+            checked={autoTarget && hasTarget}
+            disabled={!hasTarget}
+            onChange={(e) => onChange({ auto_target: e.target.checked })}
+          />
+          Stäng automatiskt vid mål
+        </label>
+      </div>
+      <p className="mt-2 text-xs text-neutral-500">
+        Kontrolleras var tionde sekund när marknaden är öppen. Positionen stängs till den kurs som senast sågs, efter att nivån
+        nåtts på två mätningar i rad.
+      </p>
+    </div>
   );
 }
 

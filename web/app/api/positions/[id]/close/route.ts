@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { portfolioOfPosition, requireAccess } from "@/lib/auth";
+import { updatePositionWithOptional } from "@/lib/optionalColumns";
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const portfolioId = await portfolioOfPosition(params.id);
@@ -19,16 +20,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const exitPrice = body.exit_price ?? pos.current_price;
 
-  const { data, error } = await supabaseAdmin
-    .from("portfolio_positions")
-    .update({
-      status: "closed",
-      exit_price: exitPrice,
-      exit_time: new Date().toISOString(),
-    })
-    .eq("id", params.id)
-    .select()
-    .single();
+  const { data, error } = await updatePositionWithOptional(
+    params.id,
+    { status: "closed", exit_price: exitPrice, exit_time: new Date().toISOString() },
+    { close_reason: "manual" }
+  );
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json(data);

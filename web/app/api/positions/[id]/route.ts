@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { portfolioOfPosition, requireAccess } from "@/lib/auth";
+import { validateAuto } from "@/lib/autoClose";
+import { isMissingColumn } from "@/lib/optionalColumns";
 
 // PATCH: edit any of a position's editable fields (works for open or closed
 // positions — e.g. fixing a typo'd entry price, adjusting stop/target,
 // correcting the note, or even the exit price on a closed trade).
 // Body: any subset of { entry_price, quantity, stop_loss, target_price,
-//                        exit_price, note, podcast_episode }
+//                        exit_price, note, podcast_episode, auto_stop, auto_target }
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   const portfolioId = await portfolioOfPosition(params.id);
   if (portfolioId == null) return NextResponse.json({ error: "Position not found" }, { status: 404 });
@@ -47,6 +49,46 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     }
   }
 
+  // Automatic stop loss / target. The effective settings (what is stored,
+  // with this request's changes on top) must make sense together, so the
+  // position can't be switched to "close automatically" at a level the price
+  // has already passed — it would close at once.
+  const touchesAuto = "auto_stop" in body || "auto_target" in body || "stop_loss" in body || "target_price" in body;
+  if (touchesAuto) {
+    const { data: cur, error: curErr } = await supabaseAdmin
+      .from("portfolio_positions")
+      .select("*")
+      .eq("id", params.id)
+      .single();
+    if (curErr || !cur) return NextResponse.json({ error: "Position not found" }, { status: 404 });
+
+    const stop = "stop_loss" in updates ? (updates.stop_loss as number | null) : cur.stop_loss ?? null;
+    const target = "target_price" in updates ? (updates.target_price as number | null) : cur.target_price ?? null;
+    let autoStop = "auto_stop" in body ? body.auto_stop === true : cur.auto_stop === true;
+    let autoTarget = "auto_target" in body ? body.auto_target === true : cur.auto_target === true;
+
+    // Removing a level removes the automation that depended on it. But asking
+    // to switch automation ON with no level set is a mistake worth telling
+    // you about (validateAuto below), not something to ignore silently.
+    if (stop == null && body.auto_stop !== true) autoStop = false;
+    if (target == null && body.auto_target !== true) autoTarget = false;
+
+    const wantsOn = (body.auto_stop === true && cur.auto_stop !== true) || (body.auto_target === true && cur.auto_target !== true);
+    if (cur.status !== "open" && wantsOn) {
+      return NextResponse.json({ error: "Positionen är redan stängd, automatik kan bara slås på för öppna positioner." }, { status: 400 });
+    }
+    if (cur.status === "open" && (autoStop || autoTarget)) {
+      const ref = Number(cur.current_price ?? updates.entry_price ?? cur.entry_price);
+      const problem = validateAuto({ stop_loss: stop, target_price: target, auto_stop: autoStop, auto_target: autoTarget }, ref);
+      if (problem) return NextResponse.json({ error: problem }, { status: 400 });
+    }
+
+    // Only send the flags when they change, so ordinary edits keep working
+    // before the database has the auto-close columns.
+    if (autoStop !== (cur.auto_stop === true)) updates.auto_stop = autoStop;
+    if (autoTarget !== (cur.auto_target === true)) updates.auto_target = autoTarget;
+  }
+
   const { data, error } = await supabaseAdmin
     .from("portfolio_positions")
     .update(updates)
@@ -54,7 +96,15 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     .select()
     .single();
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    if (isMissingColumn(error)) {
+      return NextResponse.json(
+        { error: "Databasen saknar kolumnerna för automatisk stängning. Kör 0003_auto_close.sql i Supabase först." },
+        { status: 500 }
+      );
+    }
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
   return NextResponse.json(data);
 }
 

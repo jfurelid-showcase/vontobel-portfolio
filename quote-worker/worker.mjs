@@ -109,24 +109,95 @@ async function fetchLivePrice(insref) {
 // produce a wrong NAV, so page through by id until a short page comes back.
 // For normal sizes that is exactly ONE query, i.e. one consistent snapshot.
 const POSITION_PAGE = 1000;
+
+// The automatic stop loss / target columns come from 0003_auto_close.sql, which
+// is run by hand. If the database doesn't have them yet, fall back to the
+// plain columns (NAV keeps working, auto-close is simply off) and look again
+// every so often, so it switches on by itself once the SQL has been run.
+const BASE_COLUMNS = "id, portfolio_id, isin, status, entry_price, stake_sek, current_price, exit_price";
+const AUTO_COLUMNS = `${BASE_COLUMNS}, name, stop_loss, target_price, auto_stop, auto_target`;
+const AUTO_RETRY_EVERY_TICKS = 30;
+let autoColumnsOk = true;
+let ticksSinceAutoCheck = 0;
+
+function isMissingColumn(err) {
+  return !!err && (err.code === "42703" || err.code === "PGRST204" || /does not exist|schema cache/i.test(err.message || ""));
+}
+
 async function fetchAllPositions() {
+  if (!autoColumnsOk && ++ticksSinceAutoCheck >= AUTO_RETRY_EVERY_TICKS) {
+    autoColumnsOk = true; // try the full column list again
+    ticksSinceAutoCheck = 0;
+  }
   const all = [];
   let cursor = null;
   for (let page = 0; page < 500; page++) {
     let q = supabase
       .from("portfolio_positions")
-      .select("id, portfolio_id, isin, status, entry_price, stake_sek, current_price, exit_price")
+      .select(autoColumnsOk ? AUTO_COLUMNS : BASE_COLUMNS)
       .order("id", { ascending: true })
       .limit(POSITION_PAGE);
     if (cursor) q = q.gt("id", cursor);
     const { data, error } = await q;
-    if (error) throw error;
+    if (error) {
+      if (autoColumnsOk && isMissingColumn(error)) {
+        console.warn("Automatic stop loss / target is off: the database has no auto_stop/auto_target columns yet (run 0003_auto_close.sql).");
+        autoColumnsOk = false;
+        ticksSinceAutoCheck = 0;
+        return fetchAllPositions();
+      }
+      throw error;
+    }
     const rows = data || [];
     all.push(...rows);
     if (rows.length < POSITION_PAGE) break;
     cursor = rows[rows.length - 1].id;
   }
   return all;
+}
+
+// ---- Automatic stop loss / take profit --------------------------------------
+// A position that has asked to be closed automatically is closed when the fresh
+// price reaches its stop loss (price <= stop) or target (price >= target).
+//
+// A single wrong price could otherwise close a position for good — this feed
+// has produced one-off bad prices before — so the level must be reached on
+// CONFIRM_TICKS fresh prices in a row (about 12 seconds apart) before the
+// position closes. A tick with no fresh price neither counts nor resets.
+const CONFIRM_TICKS = 2;
+const breachCount = new Map(); // positionId -> { reason, n }
+
+function autoTrigger(pos, price) {
+  if (pos.auto_stop && pos.stop_loss != null && price <= pos.stop_loss) return "stop_loss";
+  if (pos.auto_target && pos.target_price != null && price >= pos.target_price) return "take_profit";
+  return null;
+}
+
+// Decide which of this tick's open positions to close. Pure bookkeeping on
+// breachCount; the caller does the database write.
+function positionsToAutoClose(openPositions, priceByIsin) {
+  const due = [];
+  const seen = new Set();
+  for (const pos of openPositions) {
+    seen.add(pos.id);
+    if (!pos.auto_stop && !pos.auto_target) {
+      breachCount.delete(pos.id);
+      continue;
+    }
+    const price = priceByIsin.get(pos.isin);
+    if (price == null) continue; // no fresh price this tick: leave the count as it is
+    const reason = autoTrigger(pos, price);
+    if (!reason) {
+      breachCount.delete(pos.id);
+      continue;
+    }
+    const prev = breachCount.get(pos.id);
+    const n = prev && prev.reason === reason ? prev.n + 1 : 1;
+    breachCount.set(pos.id, { reason, n });
+    if (n >= CONFIRM_TICKS) due.push({ pos, reason, price });
+  }
+  for (const id of [...breachCount.keys()]) if (!seen.has(id)) breachCount.delete(id); // closed/deleted meanwhile
+  return due;
 }
 
 async function tick() {
@@ -185,6 +256,8 @@ async function tick() {
   const plById = new Map(); // portfolio id -> total P/L in SEK
   const addPl = (portfolioId, amount) => plById.set(portfolioId, (plById.get(portfolioId) ?? 0) + amount);
 
+  const autoDue = new Map(positionsToAutoClose(openPositions, priceByIsin).map((d) => [d.pos.id, d]));
+
   for (const pos of openPositions) {
     if (!plById.has(pos.portfolio_id)) plById.set(pos.portfolio_id, 0);
     const price = priceByIsin.get(pos.isin) ?? pos.current_price; // fall back to last known price if this tick's fetch failed
@@ -194,6 +267,38 @@ async function tick() {
 
     const freshPrice = priceByIsin.get(pos.isin);
     if (freshPrice == null) continue; // nothing new to write for this position this tick
+
+    const due = autoDue.get(pos.id);
+    if (due) {
+      // Close it, but only if it is still open: if you closed it by hand a
+      // moment ago, leave that close alone. Its profit is counted once above,
+      // at this same price, so the NAV written below is the same either way.
+      const { data: closed, error: closeErr } = await supabase
+        .from("portfolio_positions")
+        .update({
+          status: "closed",
+          exit_price: freshPrice,
+          exit_time: now,
+          current_price: freshPrice,
+          current_updated_at: now,
+          close_reason: due.reason,
+        })
+        .eq("id", pos.id)
+        .eq("status", "open")
+        .select("id");
+      if (closeErr) {
+        console.warn(`Auto-close of ${pos.name ?? pos.id} failed: ${closeErr.message}`);
+      } else if (closed && closed.length > 0) {
+        breachCount.delete(pos.id);
+        console.log(
+          `AUTO-CLOSE ${due.reason === "stop_loss" ? "stop loss" : "target"}: ${pos.name ?? pos.id} (portfolio ${pos.portfolio_id}) closed at ${freshPrice}`
+        );
+      } else {
+        breachCount.delete(pos.id); // already closed by someone else
+      }
+      await supabase.from("price_ticks").insert({ position_id: pos.id, price: freshPrice, ts: now });
+      continue;
+    }
 
     await supabase
       .from("portfolio_positions")

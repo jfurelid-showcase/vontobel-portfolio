@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { usePortfolio } from "@/lib/portfolioClient";
+import { useResync } from "@/lib/useResync";
 
 type NavPoint = { ts: string; nav: number };
 type TradeEvent = {
@@ -153,46 +154,78 @@ export default function NavChart({ history: _history, portfolioName }: { history
   const [raw, setRaw] = useState<NavPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const lastTsRef = useRef<string | null>(null);
+  const resyncRef = useRef<(() => void) | null>(null);
+  const [resyncCount, setResyncCount] = useState(0);
+
+  // Back on the page after it was in the background: reload the series from
+  // scratch (and the day's trades) instead of trusting whatever the paused
+  // timers managed to do.
+  useResync(() => {
+    resyncRef.current?.();
+    setResyncCount((c) => c + 1);
+  });
 
   useEffect(() => {
     let cancelled = false;
     const key = RANGES.find((r) => r.label === range)!.key;
 
+    // Only the most recently STARTED full load may write its result, so a slow
+    // older request can never overwrite a newer one.
+    let loadSeq = 0;
     async function fullLoad() {
+      const mine = ++loadSeq;
       try {
         const rows = await fetchSeries(key, portfolioId);
-        if (cancelled) return;
+        if (cancelled || mine !== loadSeq) return;
         lastTsRef.current = rows.length ? rows[rows.length - 1].ts : null;
         setRaw(rows);
       } catch (e) {
+        // Keep whatever is already on screen rather than blanking the chart
+        // because of one failed request (e.g. a flaky mobile connection).
         console.error("nav_series failed:", e);
-        if (!cancelled) setRaw([]);
       }
-      if (!cancelled) setLoading(false);
+      if (!cancelled && mine === loadSeq) setLoading(false);
     }
 
     // 1D: only fetch ticks newer than what we already have (every 10s).
+    // One poll at a time: when a phone wakes up, the timers that piled up in
+    // the background fire together, and overlapping polls all start from the
+    // same "last" and each append the same rows.
+    let polling = false;
     async function pollNew() {
-      const last = lastTsRef.current;
-      if (!last) return fullLoad();
-      const { data, error } = await supabase
-        .from("nav_history")
-        .select("ts, nav")
-        .eq("portfolio_id", portfolioId)
-        .gt("ts", last)
-        .order("ts", { ascending: true })
-        .limit(PAGE);
-      if (cancelled || error || !data || data.length === 0) return;
-      const fresh = data.map((r: any) => ({ ts: r.ts as string, nav: Number(r.nav) }));
-      lastTsRef.current = fresh[fresh.length - 1].ts;
-      setRaw((prev) => {
-        // Past Stockholm midnight the "day" changes — start over cleanly.
-        if (prev.length && stockholmDay(prev[0].ts) !== stockholmDay(fresh[fresh.length - 1].ts)) {
-          fullLoad();
-          return prev;
-        }
-        return [...prev, ...fresh];
-      });
+      if (polling) return;
+      polling = true;
+      try {
+        const last = lastTsRef.current;
+        if (!last) return await fullLoad();
+        const { data, error } = await supabase
+          .from("nav_history")
+          .select("ts, nav")
+          .eq("portfolio_id", portfolioId)
+          .gt("ts", last)
+          .order("ts", { ascending: true })
+          .limit(PAGE);
+        if (cancelled || error || !data || data.length === 0) return;
+        // A full page means there is probably more than we asked for (we were
+        // away for a long time) — load the whole day instead of catching up.
+        if (data.length >= PAGE) return await fullLoad();
+        const fresh = data.map((r: any) => ({ ts: r.ts as string, nav: Number(r.nav) }));
+        lastTsRef.current = fresh[fresh.length - 1].ts;
+        setRaw((prev) => {
+          // Past Stockholm midnight the "day" changes — start over cleanly.
+          if (prev.length && stockholmDay(prev[0].ts) !== stockholmDay(fresh[fresh.length - 1].ts)) {
+            fullLoad();
+            return prev;
+          }
+          // Only ever add rows NEWER than the last one already shown, so the
+          // same tick can't be appended twice whatever the timing.
+          const lastMs = prev.length ? Date.parse(prev[prev.length - 1].ts) : -Infinity;
+          const add = fresh.filter((r) => Date.parse(r.ts) > lastMs);
+          return add.length ? [...prev, ...add] : prev;
+        });
+      } finally {
+        polling = false;
+      }
     }
 
     setLoading(true);
@@ -202,9 +235,11 @@ export default function NavChart({ history: _history, portfolioName }: { history
     // data has arrived).
     setHoverIdx(null);
     fullLoad();
+    resyncRef.current = fullLoad;
     const t = setInterval(key === "1D" ? pollNew : fullLoad, key === "1D" ? 10_000 : 30_000);
     return () => {
       cancelled = true;
+      resyncRef.current = null;
       clearInterval(t);
     };
   }, [range, portfolioId]);
@@ -269,7 +304,7 @@ export default function NavChart({ history: _history, portfolioName }: { history
     return () => {
       cancelled = true;
     };
-  }, [dayKey, portfolioId]);
+  }, [dayKey, portfolioId, resyncCount]);
 
   function buildExportCanvas(): HTMLCanvasElement | null {
     if (points.length < 2) return null;

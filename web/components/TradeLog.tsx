@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { usePortfolio } from "@/lib/portfolioClient";
+import { useResync } from "@/lib/useResync";
 
 type Position = {
   id: string;
@@ -20,6 +21,7 @@ type Position = {
   exit_price: number | null;
   exit_time: string | null;
   status: "open" | "closed";
+  close_reason?: string | null; // "stop_loss" | "take_profit" when closed automatically
 };
 
 type TradeEvent = { key: string; ts: string; kind: "open" | "close"; p: Position };
@@ -73,6 +75,10 @@ export default function TradeLog() {
     setPositions((data as Position[]) ?? []);
     setLoading(false);
   }
+
+  // Back on the page after it was in the background: the live-update
+  // connection may have been paused, so reload instead of waiting for an event.
+  useResync(load);
 
   useEffect(() => {
     load();
@@ -268,6 +274,8 @@ function EventRow({ ev }: { ev: TradeEvent }) {
           <span className={isLong ? "text-emerald-400" : isShort ? "text-red-400" : ""}>{dirLabel(p.direction)}</span>
           {leverage ? ` ${leverage}` : ""}
           {p.quantity != null ? ` · ${p.quantity} @ ${price.toFixed(2)}` : ` · @ ${price.toFixed(2)}`}
+          {kind === "close" && p.close_reason === "stop_loss" && <span className="text-amber-300"> · automatisk stop loss</span>}
+          {kind === "close" && p.close_reason === "take_profit" && <span className="text-amber-300"> · automatiskt mål</span>}
         </div>
       </div>
       <div className="shrink-0 text-right">{plCell}</div>

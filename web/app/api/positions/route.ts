@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { portfolioIdFrom, requireAccess } from "@/lib/auth";
+import { validateAuto } from "@/lib/autoClose";
 
 // GET /api/positions?portfolio_id=<id>   (public read, like the dashboards)
 export async function GET(req: NextRequest) {
@@ -35,7 +36,8 @@ export async function GET(req: NextRequest) {
   return NextResponse.json(enriched);
 }
 
-// Body: { isin, entry_price, stop_loss, target_price, quantity, note, podcast_episode }
+// Body: { isin, entry_price, stop_loss, target_price, quantity, note, podcast_episode,
+//         auto_stop?, auto_target? }   (auto_* = close automatically at that level)
 // Everything else (name, direction, leverage, underlying) is copied over
 // from certificates_full so the admin doesn't retype it. stake_sek (used by
 // the NAV worker's weighted-return calculation) is derived automatically
@@ -51,6 +53,18 @@ export async function POST(req: NextRequest) {
 
   if (!isin || !entry_price || !quantity) {
     return NextResponse.json({ error: "isin, entry_price and quantity are required" }, { status: 400 });
+  }
+
+  // Automatic stop loss / target: only if the level is set and still ahead of
+  // the price (otherwise the position would close the moment it is created).
+  const autoStop = body.auto_stop === true;
+  const autoTarget = body.auto_target === true;
+  if (autoStop || autoTarget) {
+    const problem = validateAuto(
+      { stop_loss: stop_loss ?? null, target_price: target_price ?? null, auto_stop: autoStop, auto_target: autoTarget },
+      Number(entry_price)
+    );
+    if (problem) return NextResponse.json({ error: problem }, { status: 400 });
   }
 
   const { data: cert, error: certErr } = await supabaseAdmin
@@ -79,6 +93,10 @@ export async function POST(req: NextRequest) {
       stake_sek: quantity * entry_price,
       stop_loss: stop_loss ?? null,
       target_price: target_price ?? null,
+      // Only sent when switched on, so adding an ordinary position keeps
+      // working even before the database has the auto-close columns.
+      ...(autoStop ? { auto_stop: true } : {}),
+      ...(autoTarget ? { auto_target: true } : {}),
       current_price: cert.last_price ?? entry_price,
       current_updated_at: new Date().toISOString(),
       note: note ?? null,
