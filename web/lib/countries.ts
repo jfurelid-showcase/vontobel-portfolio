@@ -1,8 +1,8 @@
 // The trader's country is limited to the Nordic countries. Codes are ISO
 // 3166-1 alpha-2. Names come from the browser's own localisation data
 // (Intl.DisplayNames), so there is no name table to maintain; flags are
-// served as images (see flagUrl) because Windows browsers don't render flag
-// emoji.
+// drawn as images/SVG (see components/Flag.tsx) because Windows browsers don't
+// render flag emoji.
 //
 // To allow more countries later, just add their codes here — the Admin
 // list, the server-side validation and the flag all follow this one list.
@@ -29,6 +29,8 @@ export function countryOptions(locale = "sv"): { code: string; name: string }[] 
   );
 }
 
+// Round "circle-flags" artwork (https://github.com/HatScripts/circle-flags), MIT
+// licensed. Only used for countries that aren't built in to components/Flag.tsx.
 export function flagUrl(code: string): string {
-  return `https://flagcdn.com/${code.toLowerCase()}.svg`;
+  return `https://hatscripts.github.io/circle-flags/flags/${code.toLowerCase()}.svg`;
 }
