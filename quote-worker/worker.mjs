@@ -336,6 +336,142 @@ async function tick() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Ticker for the Skin in the Game website: today's most traded Vontobel ETPs.
+//
+// One call per tick to NGM's list endpoint (the same one the daily full-list
+// scraper uses), sorted by turnover, gives both the ranking and the prices.
+// Early in the day almost nothing has traded, so until at least
+// TICKER_MIN_TRADED products have turnover today, the ticker shows the
+// previous day's ranking from certificates_full, with live prices fetched
+// per instrument. Rows go into ticker_quotes (see 0004_ticker_quotes.sql),
+// which the website reads and subscribes to via Realtime.
+// ---------------------------------------------------------------------------
+const LIST_API = "https://ngm-api-prod.vmate.se/instrument/list";
+const TICKER_SIZE = Number(process.env.TICKER_SIZE || 10);
+const TICKER_MIN_TRADED = Number(process.env.TICKER_MIN_TRADED || 5);
+let lastTickerSnapshot = "";
+let lastTickerLog = 0;
+
+function priceOf(item) {
+  if (item.lastprice != null) return item.lastprice;
+  if (item.bidprice != null && item.askprice != null) return (item.bidprice + item.askprice) / 2;
+  return item.askprice ?? item.bidprice ?? null;
+}
+
+async function fetchTopByTurnover(size) {
+  const response = await apiContext.post(LIST_API, {
+    headers: { "Content-Type": "application/json" },
+    data: {
+      page: 0,
+      size,
+      market: "etp",
+      instrumentType: "ALL",
+      issuers: "VON",
+      sortField: "turnover",
+      sortDirection: "desc",
+    },
+  });
+  if (!response.ok()) throw new Error(`HTTP ${response.status()} from instrument/list`);
+  const json = await response.json();
+  return json.data || [];
+}
+
+function tickerRowFromItem(item, rank) {
+  return {
+    rank,
+    isin: item.isin,
+    insref: item.insref ?? null,
+    name: item.name || item.symbol || item.isin,
+    underlying: item.subsubclass ?? null,
+    direction: item.funddirection ?? null,
+    // NGM stores leverage with two implicit decimals (300 = 3.00x).
+    leverage: item.fundleverage != null ? item.fundleverage / 100 : null,
+    last_price: priceOf(item),
+    daily_change_pct: item.dailyPerformance ?? null,
+    turnover: item.turnover ?? null,
+    source: "today",
+  };
+}
+
+async function previousDayTickerRows() {
+  const { data, error } = await supabase
+    .from("certificates_full")
+    .select("isin, insref, name, underlying, direction, leverage, last_price, turnover")
+    .gt("turnover", 0)
+    .order("turnover", { ascending: false })
+    .limit(TICKER_SIZE);
+  if (error) throw new Error(`certificates_full: ${error.message}`);
+
+  return Promise.all(
+    (data || []).map(async (c, i) => {
+      let price = null;
+      let change = null;
+      if (c.insref != null) {
+        try {
+          const r = await apiContext.get(INSTRUMENT_API(c.insref));
+          if (r.ok()) {
+            const j = await r.json();
+            price = priceOf(j);
+            change = j.dailyPerformance ?? null;
+          }
+        } catch {}
+      }
+      // If NGM doesn't report a daily change for the instrument, compare
+      // against the price captured by the last daily scrape.
+      if (change == null && price != null && c.last_price) {
+        change = ((price - Number(c.last_price)) / Number(c.last_price)) * 100;
+      }
+      return {
+        rank: i + 1,
+        isin: c.isin,
+        insref: c.insref,
+        name: c.name,
+        underlying: c.underlying,
+        direction: c.direction,
+        leverage: c.leverage,
+        last_price: price ?? c.last_price,
+        daily_change_pct: change,
+        turnover: c.turnover,
+        source: "previous",
+      };
+    })
+  );
+}
+
+async function tickerTick() {
+  await ensureBrowser();
+  const items = await fetchTopByTurnover(TICKER_SIZE);
+  const tradedToday = items.filter((it) => (it.turnover ?? 0) > 0);
+
+  const rows =
+    tradedToday.length >= TICKER_MIN_TRADED
+      ? tradedToday.slice(0, TICKER_SIZE).map((it, i) => tickerRowFromItem(it, i + 1))
+      : await previousDayTickerRows();
+  if (rows.length === 0) return; // keep whatever the table already shows
+
+  // Skip the write (and the Realtime event to every visitor) when nothing moved.
+  const snapshot = JSON.stringify(rows);
+  if (snapshot === lastTickerSnapshot) return;
+  lastTickerSnapshot = snapshot;
+
+  const updated_at = new Date().toISOString();
+  const { error } = await supabase
+    .from("ticker_quotes")
+    .upsert(rows.map((r) => ({ ...r, updated_at })), { onConflict: "rank" });
+  if (error) throw new Error(`ticker_quotes upsert: ${error.message}`);
+  await supabase.from("ticker_quotes").delete().gt("rank", rows.length);
+
+  // Once a minute, log the leader's turnover — watching it grow through the
+  // day confirms the list endpoint reports intraday turnover.
+  if (Date.now() - lastTickerLog > 60000) {
+    lastTickerLog = Date.now();
+    console.log(
+      `Ticker: ${rows.length} rows (${rows[0].source}), #1 ${rows[0].name} turnover=${rows[0].turnover} price=${rows[0].last_price}`
+    );
+  }
+}
+
 let marketWasOpen = null;
 
 async function loop() {
@@ -358,6 +494,13 @@ async function loop() {
   }
   try {
     await tick();
+    // Separate from the NAV tick: a ticker problem must never stop the
+    // portfolios from updating, and vice versa.
+    try {
+      await tickerTick();
+    } catch (err) {
+      console.warn("Ticker update failed:", err?.message ?? err);
+    }
   } catch (err) {
     console.error("Tick failed:", err);
     try {
