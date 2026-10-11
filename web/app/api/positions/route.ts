@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { portfolioIdFrom, requireAccess } from "@/lib/auth";
 import { validateAuto } from "@/lib/autoClose";
+import { marketClosedResponse } from "@/lib/tradingHours";
 import { fetchNgmQuote, quoteColumns } from "@/lib/quote";
 import { insertPositionWithOptional } from "@/lib/optionalColumns";
 
@@ -56,6 +57,10 @@ export async function POST(req: NextRequest) {
   if (portfolioId == null) return NextResponse.json({ error: "Ogiltigt portfolio_id" }, { status: 400 });
   const access = await requireAccess(req, portfolioId);
   if (!access.ok) return access.res;
+
+  // A new position is a purchase: only while the market is open.
+  const closed = marketClosedResponse();
+  if (closed) return closed;
 
   if (!isin || !quantity || !(Number(quantity) > 0)) {
     return NextResponse.json({ error: "isin and quantity are required" }, { status: 400 });

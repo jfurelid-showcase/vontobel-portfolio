@@ -2,27 +2,10 @@
 
 import { useEffect, useState } from "react";
 
-// Mirrors the quote worker's trading-hours window (quote-worker/worker.mjs:
-// MARKET_OPEN_MIN / MARKET_CLOSE_MIN). Keep these two numbers in sync if you
-// change the worker's hours — this is a separate, purely client-side check
-// so the badge doesn't need a server round trip.
-const OPEN_MIN = 8 * 60; // 08:00
-const CLOSE_MIN = 22 * 60; // 22:00
-
-function isMarketOpen(d: Date): boolean {
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Europe/Stockholm",
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(d);
-  const get = (t: string) => parts.find((p) => p.type === t)!.value;
-  const weekday = get("weekday");
-  if (weekday === "Sat" || weekday === "Sun") return false;
-  const minutes = Number(get("hour")) * 60 + Number(get("minute"));
-  return minutes >= OPEN_MIN && minutes <= CLOSE_MIN;
-}
+// The window itself lives in lib/marketHours.ts, shared with the server-side check that
+// refuses trades outside it. It mirrors the quote worker's hours (quote-worker/worker.mjs:
+// MARKET_OPEN_MIN / MARKET_CLOSE_MIN); keep them in sync if you change one.
+import { isMarketOpen } from "@/lib/marketHours";
 
 export default function MarketStatus({ className = "" }: { className?: string }) {
   // Start as null so the very first render (before we know "now") shows

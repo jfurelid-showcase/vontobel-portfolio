@@ -17,6 +17,8 @@ import PositionsExportButton from "@/components/PositionsExport";
 import AdminTab from "@/components/AdminTab";
 import { PortfolioProvider, usePortfolio } from "@/lib/portfolioClient";
 import { useResync } from "@/lib/useResync";
+import { useMarketOpen } from "@/lib/useMarketOpen";
+import { MARKET_CLOSED_MESSAGE, isMarketOpen } from "@/lib/marketHours";
 import { gavAfterAdd, realizedOnTrim, soldPartsByPosition } from "@/lib/tradeMath";
 type Position = Parameters<typeof PositionCard>[0]["p"] & {
   stake_sek: number;
@@ -729,6 +731,11 @@ function PortfolioAdmin() {
 
   async function addPosition() {
     if (!selected) return;
+    // (The button is already disabled when closed; this covers a click right at the closing minute.)
+    if (!isMarketOpen(new Date())) {
+      alert(MARKET_CLOSED_MESSAGE);
+      return;
+    }
     setSaving(true);
     const res = await authFetch("/api/positions", {
       method: "POST",
@@ -769,6 +776,10 @@ function PortfolioAdmin() {
   }
 
   async function closePosition(id: string) {
+    if (!isMarketOpen(new Date())) {
+      alert(MARKET_CLOSED_MESSAGE);
+      return;
+    }
     if (!confirm("Stäng positionen? Den säljs till aktuell säljkurs (bid).")) return;
     const res = await authFetch(`/api/positions/${id}/close`, { method: "POST" });
     if (!res.ok) alert((await res.json().catch(() => ({}))).error || "Det gick inte att stänga positionen.");
@@ -845,6 +856,7 @@ function PortfolioAdmin() {
   // ---- Köp mer (buy more) / Sälj del (sell part) --------------------------------------
   // The price is always the live ask (buying) or bid (selling), fetched by the server at
   // the moment you confirm; what is shown here is only a preview.
+  const marketOpen = useMarketOpen();
   const [trade, setTrade] = useState<{ id: string; isin: string; mode: "add" | "trim" } | null>(null);
   const [tradeQty, setTradeQty] = useState("");
   const [tradeQuote, setTradeQuote] = useState<{ ask: number | null; bid: number | null; loaded: boolean }>({ ask: null, bid: null, loaded: false });
@@ -877,6 +889,10 @@ function PortfolioAdmin() {
 
   async function submitTrade(p: Position) {
     if (!trade) return;
+    if (!isMarketOpen(new Date())) {
+      setTradeError(MARKET_CLOSED_MESSAGE);
+      return;
+    }
     setTradeBusy(true);
     setTradeError(null);
     try {
@@ -1124,6 +1140,11 @@ function PortfolioAdmin() {
                 className="input"
               />
             </Field>
+            {!marketOpen && (
+              <p className="col-span-2 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">
+                {MARKET_CLOSED_MESSAGE} Du kan förbereda positionen här, men inte lägga till den förrän marknaden öppnar.
+              </p>
+            )}
             <AutoCloseOptions
               stop={form.stop_loss}
               target={form.target_price}
@@ -1149,7 +1170,7 @@ function PortfolioAdmin() {
             </Field>
             <button
               onClick={addPosition}
-              disabled={saving || !form.entry_price}
+              disabled={saving || !form.entry_price || !marketOpen}
               className="col-span-2 mt-2 rounded-lg bg-neutral-100 px-4 py-2 font-medium text-neutral-900 hover:bg-white disabled:opacity-50"
             >
               {saving ? "Adding…" : `Add ${selected.name} to portfolio`}
@@ -1312,6 +1333,7 @@ function PortfolioAdmin() {
                   qty={tradeQty}
                   setQty={setTradeQty}
                   quote={tradeQuote}
+                  marketOpen={marketOpen}
                   busy={tradeBusy}
                   error={tradeError}
                   onConfirm={() => submitTrade(p)}
@@ -1352,6 +1374,7 @@ function TradePanel({
   qty,
   setQty,
   quote,
+  marketOpen,
   busy,
   error,
   onConfirm,
@@ -1362,6 +1385,7 @@ function TradePanel({
   qty: string;
   setQty: (v: string) => void;
   quote: { ask: number | null; bid: number | null; loaded: boolean };
+  marketOpen: boolean;
   busy: boolean;
   error: string | null;
   onConfirm: () => void;
@@ -1426,11 +1450,12 @@ function TradePanel({
           {mode === "add" ? "Ange ett antal större än 0." : `Ange ett antal mellan 1 och ${held - 1}. Vill du sälja allt, använd Close.`}
         </p>
       )}
+      {!marketOpen && <p className="mt-2 text-sm text-red-400">{MARKET_CLOSED_MESSAGE}</p>}
       {error && <p className="mt-2 text-sm text-red-400">{error}</p>}
       <div className="mt-3 flex gap-2">
         <button
           onClick={onConfirm}
-          disabled={busy || !qtyOk || price == null}
+          disabled={busy || !qtyOk || price == null || !marketOpen}
           className="rounded-lg bg-neutral-100 px-4 py-1.5 text-sm font-medium text-neutral-900 hover:bg-white disabled:opacity-50"
         >
           {busy ? "Genomför…" : mode === "add" ? "Köp till" : "Sälj"}

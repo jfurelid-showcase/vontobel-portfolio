@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { portfolioOfPosition, requireAccess } from "@/lib/auth";
+import { marketClosedResponse } from "@/lib/tradingHours";
 import { isMissingFunction, resolveBuyPrice } from "@/lib/tradePrice";
 
 // POST /api/positions/<id>/add   body: { quantity }
@@ -16,6 +17,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (portfolioId == null) return NextResponse.json({ error: "Position not found" }, { status: 404 });
   const access = await requireAccess(req, portfolioId);
   if (!access.ok) return access.res;
+
+  // Trades only while the market is open.
+  const closed = marketClosedResponse();
+  if (closed) return closed;
 
   const body = await req.json().catch(() => ({}));
   const quantity = Number(body.quantity);

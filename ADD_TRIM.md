@@ -32,3 +32,15 @@ Du kan nu köpa mer av en befintlig position (då räknas GAV om) och sälja en 
 - Gäster kan använda knapparna på sin egen portfölj via sin privata länk.
 - Positioner som skapats före den här funktionen fungerar som vanligt: deras första köp läggs in i historiken första gången
   du köper till eller säljer del.
+
+## Handelstider
+Köp av ny position, Köp mer, Sälj del och Close går bara att göra när marknaden är öppen:
+vardagar kl 08:00–22:00 svensk tid (samma fönster som märket "Marknad öppen/stängd" och workern använder;
+sommar- och vintertid hanteras automatiskt).
+- Är marknaden stängd visas ett meddelande och knapparna är avstängda. Servern vägrar dessutom själv, så det går inte att
+  komma runt i webbläsaren, varken för ägaren eller för gäster.
+- Allt annat fungerar som vanligt, till exempel att ändra en anteckning, stop loss eller mål, och att läsa data.
+- **Helgdagar** känner kontrollen inte till. Då är klockan "öppen" men börsen stängd, och det som stoppar affären är kravet på
+  en live köp- eller säljkurs.
+- Behöver du tillfälligt stänga av kontrollen, till exempel för att testa på en söndag: lägg in miljövariabeln
+  `ENFORCE_TRADING_HOURS` med värdet `false` i Vercel och bygg om. Ta bort den (eller ändra värdet) för att slå på den igen.

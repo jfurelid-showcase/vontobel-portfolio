@@ -3,6 +3,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { portfolioOfPosition, requireAccess } from "@/lib/auth";
 import { updatePositionWithOptional } from "@/lib/optionalColumns";
 import { quoteColumns } from "@/lib/quote";
+import { marketClosedResponse } from "@/lib/tradingHours";
 import { resolveSellPrice } from "@/lib/tradePrice";
 
 // Closing a position sells it at the BID: the live bid fetched here at this
@@ -16,6 +17,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (portfolioId == null) return NextResponse.json({ error: "Position not found" }, { status: 404 });
   const access = await requireAccess(req, portfolioId);
   if (!access.ok) return access.res;
+
+  // Closing is a sale: only while the market is open.
+  const closed = marketClosedResponse();
+  if (closed) return closed;
 
   const body = await req.json().catch(() => ({}));
 
