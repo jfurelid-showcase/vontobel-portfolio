@@ -1099,6 +1099,10 @@ function PortfolioAdmin() {
               />
               {liveQuote.loaded && liveQuote.ask == null ? (
                 <p className="mt-1 text-xs text-red-400">Ingen köpkurs (ask) finns just nu för kontraktet.</p>
+              ) : liveQuote.loaded && liveQuote.bid == null ? (
+                <p className="mt-1 text-xs text-red-400">
+                  Ingen säljkurs (bid) finns just nu för kontraktet, så positionen kan inte värderas och läggs inte till.
+                </p>
               ) : (
                 <p className="mt-1 text-xs text-neutral-500">
                   Live, sätts alltid till köpkursen. Går inte att ändra.
@@ -1170,7 +1174,7 @@ function PortfolioAdmin() {
             </Field>
             <button
               onClick={addPosition}
-              disabled={saving || !form.entry_price || !marketOpen}
+              disabled={saving || !form.entry_price || liveQuote.bid == null || !marketOpen}
               className="col-span-2 mt-2 rounded-lg bg-neutral-100 px-4 py-2 font-medium text-neutral-900 hover:bg-white disabled:opacity-50"
             >
               {saving ? "Adding…" : `Add ${selected.name} to portfolio`}
@@ -1395,6 +1399,8 @@ function TradePanel({
   const gav = Number(p.entry_price);
   const n = Number(qty.replace(",", "."));
   const price = mode === "add" ? quote.ask : quote.bid;
+  // Buying needs both sides: the holding is valued at the bid.
+  const buyNeedsBid = mode === "add" && quote.loaded && quote.ask != null && quote.bid == null;
   const qtyOk = Number.isFinite(n) && n > 0 && (mode === "add" || n < held);
   const sek = (v: number) => `${v >= 0 ? "+" : ""}${v.toLocaleString("sv-SE", { maximumFractionDigits: 0 })} SEK`;
   const f2 = (v: number) => v.toFixed(2);
@@ -1436,6 +1442,8 @@ function TradePanel({
             <span className="text-neutral-500">Hämtar kurs…</span>
           ) : price == null ? (
             <span className="text-red-400">Ingen {mode === "add" ? "köpkurs (ask)" : "säljkurs (bid)"} finns just nu.</span>
+          ) : buyNeedsBid ? (
+            <span className="text-red-400">Ingen säljkurs (bid) finns just nu, så köpet kan inte värderas.</span>
           ) : (
             <>
               {mode === "add" ? "Köpkurs (ask)" : "Säljkurs (bid)"} <span className="font-medium text-neutral-100">{f2(price)}</span>
@@ -1455,7 +1463,7 @@ function TradePanel({
       <div className="mt-3 flex gap-2">
         <button
           onClick={onConfirm}
-          disabled={busy || !qtyOk || price == null || !marketOpen}
+          disabled={busy || !qtyOk || price == null || buyNeedsBid || !marketOpen}
           className="rounded-lg bg-neutral-100 px-4 py-1.5 text-sm font-medium text-neutral-900 hover:bg-white disabled:opacity-50"
         >
           {busy ? "Genomför…" : mode === "add" ? "Köp till" : "Sälj"}

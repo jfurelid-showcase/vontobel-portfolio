@@ -23,8 +23,8 @@ Du kan nu köpa mer av en befintlig position (då räknas GAV om) och sälja en 
   (KÖPT TILL / SÅLD DEL med eget pris och tid) och i dagsdiagrammet (egna markörer).
 
 ## Regler och begränsningar
-- Priset kan inte skrivas in. Saknas ask går det inte att köpa till, och saknas bid går det inte att sälja del (ägaren kan
-  då ange en kurs för hand, precis som vid Close).
+- Priset kan inte skrivas in. Köp mer kräver både ask och bid (annars kan köpet inte värderas), och saknas bid går det inte
+  att sälja del (ägaren kan då ange en kurs för hand, precis som vid Close).
 - **Antalet går inte längre att ändra i Edit.** Det ändras bara med Köp mer / Sälj del, så att GAV och resultat alltid stämmer.
 - En delförsäljning kan inte öppnas igen (Reopen), eftersom samma kontrakt då skulle räknas två gånger.
 - Stop loss och mål ligger kvar oförändrade efter ett köp eller en delförsäljning, och den automatiska stängningen

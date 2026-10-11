@@ -17,13 +17,21 @@ async function quoteFor(isin: string): Promise<Quote | null> {
 }
 
 // What you pay for more of a contract: the live ask. No ask, no purchase.
+// There must be a live BID as well: the holding is valued at the bid, so without one the
+// purchase could not be valued, and the small loss equal to the spread (bought at the ask,
+// worth the bid) could not be recorded from the start.
 export async function resolveBuyPrice(isin: string): Promise<PriceResult> {
   const quote = await quoteFor(isin);
   if (!quote || quote.ask == null) {
     return { ok: false, status: 409, error: "Ingen köpkurs (ask) finns just nu för kontraktet. Försök igen om en stund." };
   }
+  if (quote.bid == null) {
+    return { ok: false, status: 409, error: NO_BID_ON_BUY };
+  }
   return { ok: true, price: quote.ask, quote };
 }
+
+export const NO_BID_ON_BUY = "Ingen säljkurs (bid) finns just nu för kontraktet, så köpet kan inte värderas. Försök igen om en stund.";
 
 // What you get for selling: the live bid; if NGM can't be reached, the bid the quote
 // worker stored in the last 15 minutes. With no bid at all a guest can't sell, but

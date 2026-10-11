@@ -4,6 +4,7 @@ import { portfolioIdFrom, requireAccess } from "@/lib/auth";
 import { validateAuto } from "@/lib/autoClose";
 import { marketClosedResponse } from "@/lib/tradingHours";
 import { fetchNgmQuote, quoteColumns } from "@/lib/quote";
+import { NO_BID_ON_BUY } from "@/lib/tradePrice";
 import { insertPositionWithOptional } from "@/lib/optionalColumns";
 
 // GET /api/positions?portfolio_id=<id>   (public read, like the dashboards)
@@ -84,6 +85,11 @@ export async function POST(req: NextRequest) {
       { status: 409 }
     );
   }
+  // …and a live bid too: the position is valued at the bid, so it starts out a little below
+  // its cost, by the spread. Without a bid that loss could not be recorded.
+  if (quote.bid == null) {
+    return NextResponse.json({ error: NO_BID_ON_BUY }, { status: 409 });
+  }
   const entry_price = quote.ask;
   const nowIso = new Date().toISOString();
 
@@ -119,7 +125,7 @@ export async function POST(req: NextRequest) {
       ...(autoStop ? { auto_stop: true } : {}),
       ...(autoTarget ? { auto_target: true } : {}),
       // Shown until the worker's first tick: what it could be sold for right now.
-      current_price: quote.bid ?? entry_price,
+      current_price: quote.bid,
       current_updated_at: nowIso,
       note: note ?? null,
       podcast_episode: podcast_episode ?? null,

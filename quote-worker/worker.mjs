@@ -104,14 +104,14 @@ async function fetchQuote(insref) {
 // produce a wrong NAV, so page through by id until a short page comes back.
 // For normal sizes that is exactly ONE query, i.e. one consistent snapshot.
 // ---- Which price values the portfolio ------------------------------------------
-// PRICE_BASIS=last (the default): a position is valued at the last traded price
-//   (falling back to the bid/ask midpoint) — how it has always worked.
-// PRICE_BASIS=bid: a position is valued at the BID, the price you could
-//   actually sell it at. Contracts that rarely trade still have a bid that
+// A position is valued at the BID (the default): the price you could actually sell it
+//   at. NAV and open profit/loss follow it, so a position bought at the ask starts out a
+//   little below zero, by the spread. Contracts that rarely trade still have a bid that
 //   follows the market, so their value no longer freezes between trades.
-// Either way the bid, ask and last price are recorded on every tick, so the
-// two can be compared before switching.
-const PRICE_BASIS = (process.env.PRICE_BASIS || "last").toLowerCase() === "bid" ? "bid" : "last";
+// PRICE_BASIS=last switches back to the old way: the last traded price (falling back to
+//   the bid/ask midpoint). Only the exact word "last" does that.
+// Either way the bid, ask and last price are recorded on every tick.
+const PRICE_BASIS = (process.env.PRICE_BASIS || "bid").toLowerCase() === "last" ? "last" : "bid";
 
 function positive(v) {
   const n = typeof v === "string" ? Number(v) : v;
@@ -140,6 +140,37 @@ function valuationPrice(q, basis) {
   if (q.last != null) return q.last;
   if (q.bid != null && q.ask != null) return (q.bid + q.ask) / 2;
   return q.ask ?? q.bid ?? null;
+}
+
+// ---- Making sure a bid comes in every tick ----------------------------------------
+// Occasionally NGM answers with no bid for a contract, or the request fails, for a
+// moment. Ask once more, a split second later, before giving up on that contract for this
+// tick (then it keeps its last known price). Without this, a thinly traded contract
+// would be missing from one tick in a while for no good reason.
+const RETRY_DELAY_MS = Number(process.env.QUOTE_RETRY_DELAY_MS ?? 500);
+
+async function fetchQuoteReliably(insref) {
+  let quote = null;
+  let lastErr = null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      quote = await fetchQuote(insref);
+      lastErr = null;
+      if (valuationPrice(quote, PRICE_BASIS) != null) return quote;
+    } catch (e) {
+      lastErr = e;
+    }
+    if (attempt === 1 && RETRY_DELAY_MS > 0) await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+  }
+  if (!quote && lastErr) throw lastErr;
+  return quote;
+}
+
+// How long to wait before the next tick so that ticks start every `interval` ms, not
+// `interval` ms after the previous one FINISHED (which made them drift to 12-15 s).
+const MIN_GAP_MS = 500;
+function nextDelayMs(elapsedMs, interval) {
+  return Math.max(MIN_GAP_MS, interval - elapsedMs);
 }
 
 // ---- Writing quotes (columns from 0004_bid_ask.sql) -----------------------------
@@ -338,7 +369,7 @@ async function tick() {
           return;
         }
         try {
-          const quote = await fetchQuote(insref);
+          const quote = await fetchQuoteReliably(insref);
           quoteByIsin.set(isin, quote);
           const price = valuationPrice(quote, PRICE_BASIS);
           if (price != null) priceByIsin.set(isin, price);
@@ -594,6 +625,7 @@ async function loop() {
     console.log("Trading hours — starting price refresh.");
     marketWasOpen = true;
   }
+  const startedAt = Date.now();
   try {
     await tick();
     // Separate from the NAV tick: a ticker problem must never stop the
@@ -611,14 +643,14 @@ async function loop() {
     browser = null;
     apiContext = null;
   } finally {
-    setTimeout(loop, REFRESH_INTERVAL_MS);
+    setTimeout(loop, nextDelayMs(Date.now() - startedAt, REFRESH_INTERVAL_MS));
   }
 }
 
 console.log(`Starting quote worker, refreshing every ${REFRESH_INTERVAL_MS}ms during trading hours (${ALWAYS_ON ? "ALWAYS_ON" : HOURS_LABEL}).`);
 console.log(
   PRICE_BASIS === "bid"
-    ? "Price basis: BID — positions are valued at the price they could be sold at."
-    : "Price basis: LAST — positions are valued at the last traded price. Bid and ask are recorded; set PRICE_BASIS=bid to value at the bid."
+    ? "Price basis: BID — NAV and open P/L are valued at the price positions could be sold at."
+    : "Price basis: LAST (PRICE_BASIS=last) — positions are valued at the last traded price. Remove PRICE_BASIS to value at the bid."
 );
 loop();
