@@ -17,6 +17,7 @@ import PositionsExportButton from "@/components/PositionsExport";
 import AdminTab from "@/components/AdminTab";
 import { PortfolioProvider, usePortfolio } from "@/lib/portfolioClient";
 import { useResync } from "@/lib/useResync";
+import { gavAfterAdd, realizedOnTrim, soldPartsByPosition } from "@/lib/tradeMath";
 type Position = Parameters<typeof PositionCard>[0]["p"] & {
   stake_sek: number;
   quantity: number | null;
@@ -283,6 +284,8 @@ function Dashboard() {
     .sort((a, b) => new Date(b.exit_time ?? b.entry_time).getTime() - new Date(a.exit_time ?? a.entry_time).getTime());
   const RECENT_CLOSED_LIMIT = 10;
   const closed = closedAll.slice(0, RECENT_CLOSED_LIMIT);
+  // What has already been sold off each open position (Sälj del), shown on its card.
+  const soldBy = useMemo(() => soldPartsByPosition(positions as any), [positions]);
 
   return (
     <>
@@ -388,7 +391,7 @@ function Dashboard() {
         {open.length > 0 && view === "cards" && (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             {open.map((p) => (
-              <PositionCard key={p.id} p={p} />
+              <PositionCard key={p.id} p={p} sold={soldBy.get(p.id)} />
             ))}
           </div>
         )}
@@ -424,7 +427,7 @@ function PositionListView({ items }: { items: Position[] }) {
             <th className="px-3 py-2">Underliggande</th>
             <th className="px-3 py-2">Riktning</th>
             <th className="px-3 py-2">Antal</th>
-            <th className="px-3 py-2">Ingång</th>
+            <th className="px-3 py-2">Ingång / GAV</th>
             <th className="px-3 py-2">{items[0]?.status === "closed" ? "Utgång" : "Nu"}</th>
             <th className="px-3 py-2">Värde (SEK)</th>
             <th className="px-3 py-2">Förändring</th>
@@ -683,29 +686,46 @@ function PortfolioAdmin() {
     }
   }
 
+  // The live buy price (ask) and sell price (bid) of the selected contract.
+  // The entry price is ALWAYS the ask, fetched live; it is shown here but can't
+  // be typed in, and the server fetches it again itself at the moment you add.
+  const [liveQuote, setLiveQuote] = useState<{ ask: number | null; bid: number | null; loaded: boolean }>({
+    ask: null,
+    bid: null,
+    loaded: false,
+  });
+
   function selectCert(c: Cert) {
     setSelected(c);
-    const fallbackPrice =
-      c.last_price ??
-      (c.buy_price != null && c.sell_price != null ? (c.buy_price + c.sell_price) / 2 : null) ??
-      c.buy_price ??
-      c.sell_price ??
-      null;
-    setForm((f) => ({ ...f, entry_price: fallbackPrice != null ? String(fallbackPrice) : "" }));
+    setForm((f) => ({ ...f, entry_price: "" })); // never the stale daily value
+    setLiveQuote({ ask: null, bid: null, loaded: false });
     setResults([]);
     suppressNextSearch.current = true; // selecting shouldn't immediately re-search and reopen the list
     setQuery(c.name);
-
-    // The search result's price can be up to a day stale (once-daily
-    // full-list scrape) — fetch a genuinely live price for this one
-    // instrument and correct the field once it arrives.
-    fetch(`/api/certificates/live-price?isin=${c.isin}`)
-      .then((r) => r.json())
-      .then(({ price }) => {
-        if (price != null) setForm((f) => ({ ...f, entry_price: String(price) }));
-      })
-      .catch(() => {}); // keep the stale fallback if the live fetch fails
   }
+
+  // While a contract is selected, keep its live ask/bid fresh.
+  useEffect(() => {
+    if (!selected) return;
+    let cancelled = false;
+    const load = () =>
+      fetch(`/api/certificates/live-price?isin=${selected.isin}`, { cache: "no-store" })
+        .then((r) => r.json())
+        .then(({ ask, bid }) => {
+          if (cancelled) return;
+          setLiveQuote({ ask: ask ?? null, bid: bid ?? null, loaded: true });
+          setForm((f) => ({ ...f, entry_price: ask != null ? String(ask) : "" }));
+        })
+        .catch(() => {
+          if (!cancelled) setLiveQuote({ ask: null, bid: null, loaded: true });
+        });
+    load();
+    const t = setInterval(load, 10_000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, [selected?.isin]);
 
   async function addPosition() {
     if (!selected) return;
@@ -716,7 +736,7 @@ function PortfolioAdmin() {
       body: JSON.stringify({
         portfolio_id: portfolioId,
         isin: selected.isin,
-        entry_price: parseFloat(form.entry_price),
+        // No entry price: the server uses the live ask.
         stop_loss: form.stop_loss ? parseFloat(form.stop_loss) : null,
         target_price: form.target_price ? parseFloat(form.target_price) : null,
         // Automatic closing only makes sense with a level to close at.
@@ -730,6 +750,7 @@ function PortfolioAdmin() {
     setSaving(false);
     if (res.ok) {
       setSelected(null);
+      setLiveQuote({ ask: null, bid: null, loaded: false });
       setQuery("");
       setForm({
         entry_price: "",
@@ -748,8 +769,9 @@ function PortfolioAdmin() {
   }
 
   async function closePosition(id: string) {
-    if (!confirm("Close this position at its current price?")) return;
-    await authFetch(`/api/positions/${id}/close`, { method: "POST" });
+    if (!confirm("Stäng positionen? Den säljs till aktuell säljkurs (bid).")) return;
+    const res = await authFetch(`/api/positions/${id}/close`, { method: "POST" });
+    if (!res.ok) alert((await res.json().catch(() => ({}))).error || "Det gick inte att stänga positionen.");
     loadPositions();
   }
 
@@ -794,17 +816,15 @@ function PortfolioAdmin() {
   }
 
   async function saveEdit(id: string, status: "open" | "closed") {
+    // Entry price, exit price and quantity are locked (the quantity changes through
+    // Köp mer / Sälj del), so they are never sent.
     const payload: Record<string, unknown> = {
-      entry_price: parseFloat(editForm.entry_price),
-      quantity: parseFloat(editForm.quantity),
       stop_loss: editForm.stop_loss ? parseFloat(editForm.stop_loss) : null,
       target_price: editForm.target_price ? parseFloat(editForm.target_price) : null,
       note: editForm.note || null,
       podcast_episode: editForm.podcast_episode || null,
     };
-    if (status === "closed") {
-      payload.exit_price = editForm.exit_price ? parseFloat(editForm.exit_price) : null;
-    } else {
+    if (status === "open") {
       // Open positions only; the server writes these only if they changed.
       payload.auto_stop = editForm.auto_stop && parseFloat(editForm.stop_loss) > 0;
       payload.auto_target = editForm.auto_target && parseFloat(editForm.target_price) > 0;
@@ -819,6 +839,63 @@ function PortfolioAdmin() {
       loadPositions();
     } else {
       alert((await res.json()).error || "Failed to save changes");
+    }
+  }
+
+  // ---- Köp mer (buy more) / Sälj del (sell part) --------------------------------------
+  // The price is always the live ask (buying) or bid (selling), fetched by the server at
+  // the moment you confirm; what is shown here is only a preview.
+  const [trade, setTrade] = useState<{ id: string; isin: string; mode: "add" | "trim" } | null>(null);
+  const [tradeQty, setTradeQty] = useState("");
+  const [tradeQuote, setTradeQuote] = useState<{ ask: number | null; bid: number | null; loaded: boolean }>({ ask: null, bid: null, loaded: false });
+  const [tradeBusy, setTradeBusy] = useState(false);
+  const [tradeError, setTradeError] = useState<string | null>(null);
+
+  function openTrade(p: Position, mode: "add" | "trim") {
+    setEditingId(null);
+    setTrade({ id: p.id, isin: p.isin, mode });
+    setTradeQty("");
+    setTradeError(null);
+    setTradeQuote({ ask: null, bid: null, loaded: false });
+  }
+
+  useEffect(() => {
+    if (!trade) return;
+    let cancelled = false;
+    const load = () =>
+      fetch(`/api/certificates/live-price?isin=${trade.isin}`, { cache: "no-store" })
+        .then((r) => r.json())
+        .then(({ ask, bid }) => !cancelled && setTradeQuote({ ask: ask ?? null, bid: bid ?? null, loaded: true }))
+        .catch(() => !cancelled && setTradeQuote({ ask: null, bid: null, loaded: true }));
+    load();
+    const t = setInterval(load, 10_000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, [trade?.id, trade?.mode]);
+
+  async function submitTrade(p: Position) {
+    if (!trade) return;
+    setTradeBusy(true);
+    setTradeError(null);
+    try {
+      const res = await authFetch(`/api/positions/${p.id}/${trade.mode}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ quantity: Number(tradeQty.replace(",", ".")) }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setTradeError(body.error || "Det gick inte att genomföra affären.");
+        return;
+      }
+      setTrade(null);
+      loadPositions();
+    } catch {
+      setTradeError("Kunde inte nå servern. Försök igen.");
+    } finally {
+      setTradeBusy(false);
     }
   }
 
@@ -996,12 +1073,27 @@ function PortfolioAdmin() {
             <div className="col-span-2 rounded-lg bg-neutral-800/60 px-3 py-2 text-sm text-neutral-300">
               Selected: <span className="font-medium text-neutral-100">{selected.name}</span> ({selected.isin})
             </div>
-            <Field label="Entry price">
+            <Field label="Ingångskurs (köpkurs, ask)">
               <input
                 value={form.entry_price}
-                onChange={(e) => setForm({ ...form, entry_price: e.target.value })}
-                className="input"
+                readOnly
+                placeholder={liveQuote.loaded ? "–" : "Hämtar…"}
+                title="Sätts alltid till köpkursen när du lägger till positionen"
+                className="input cursor-not-allowed opacity-70"
               />
+              {liveQuote.loaded && liveQuote.ask == null ? (
+                <p className="mt-1 text-xs text-red-400">Ingen köpkurs (ask) finns just nu för kontraktet.</p>
+              ) : (
+                <p className="mt-1 text-xs text-neutral-500">
+                  Live, sätts alltid till köpkursen. Går inte att ändra.
+                  {liveQuote.bid != null && liveQuote.ask != null && (
+                    <>
+                      {" "}
+                      Säljkurs (bid) {liveQuote.bid} · spread {(((liveQuote.ask - liveQuote.bid) / liveQuote.ask) * 100).toFixed(2)}%
+                    </>
+                  )}
+                </p>
+              )}
             </Field>
             <Field label="Contract quantity">
               <input
@@ -1057,7 +1149,7 @@ function PortfolioAdmin() {
             </Field>
             <button
               onClick={addPosition}
-              disabled={saving}
+              disabled={saving || !form.entry_price}
               className="col-span-2 mt-2 rounded-lg bg-neutral-100 px-4 py-2 font-medium text-neutral-900 hover:bg-white disabled:opacity-50"
             >
               {saving ? "Adding…" : `Add ${selected.name} to portfolio`}
@@ -1077,19 +1169,11 @@ function PortfolioAdmin() {
                     Editing {p.name} <span className="text-xs text-neutral-400">({p.isin})</span>
                   </div>
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                    <Field label="Entry price">
-                      <input
-                        value={editForm.entry_price}
-                        onChange={(e) => setEditForm({ ...editForm, entry_price: e.target.value })}
-                        className="input"
-                      />
+                    <Field label={p.adds && p.adds > 0 ? "GAV (snittkurs)" : "Ingångskurs (ask)"}>
+                      <input value={editForm.entry_price} readOnly title="Kan inte ändras" className="input cursor-not-allowed opacity-70" />
                     </Field>
-                    <Field label="Quantity">
-                      <input
-                        value={editForm.quantity}
-                        onChange={(e) => setEditForm({ ...editForm, quantity: e.target.value })}
-                        className="input"
-                      />
+                    <Field label="Antal (ändras med Köp mer / Sälj del)">
+                      <input value={editForm.quantity} readOnly title="Kan inte ändras här" className="input cursor-not-allowed opacity-70" />
                     </Field>
                     <Field label="Stop loss">
                       <input
@@ -1115,12 +1199,8 @@ function PortfolioAdmin() {
                       />
                     )}
                     {p.status === "closed" && (
-                      <Field label="Exit price">
-                        <input
-                          value={editForm.exit_price}
-                          onChange={(e) => setEditForm({ ...editForm, exit_price: e.target.value })}
-                          className="input"
-                        />
+                      <Field label="Utgångskurs (bid)">
+                        <input value={editForm.exit_price} readOnly title="Kan inte ändras" className="input cursor-not-allowed opacity-70" />
                       </Field>
                     )}
                     <Field label="Podcast episode" full>
@@ -1164,13 +1244,14 @@ function PortfolioAdmin() {
                       </span>
                     </div>
                     <div className="text-sm text-neutral-400">
-                      {p.quantity ? `${p.quantity} contracts · ` : ""}Entry {p.entry_price} → Now{" "}
+                      {p.quantity ? `${p.quantity} contracts · ` : ""}{p.adds && p.adds > 0 ? "GAV" : "Entry"} {p.entry_price} → Now{" "}
                       {p.status === "closed" ? p.exit_price ?? "–" : p.current_price ?? "–"} · SL{" "}
                       {p.stop_loss ?? "–"}
                       {p.status === "open" && p.auto_stop ? " (auto)" : ""} · Target {p.target_price ?? "–"}
                       {p.status === "open" && p.auto_target ? " (auto)" : ""}
                       {p.status === "closed" && p.close_reason === "stop_loss" ? " · stängd automatiskt vid stop loss" : ""}
                       {p.status === "closed" && p.close_reason === "take_profit" ? " · stängd automatiskt vid målet" : ""}
+                      {p.status === "closed" && p.close_reason === "trim" ? " · såld del av en position" : ""}
                     </div>
                     <TradeNote note={p.note} podcastEpisode={p.podcast_episode} />
                   </div>
@@ -1181,6 +1262,24 @@ function PortfolioAdmin() {
                     >
                       Edit
                     </button>
+                    {p.status === "open" && p.quantity != null && (
+                      <>
+                        <button
+                          onClick={() => openTrade(p, "add")}
+                          className="rounded-lg border border-neutral-700 px-3 py-1 text-sm hover:bg-neutral-800"
+                        >
+                          Köp mer
+                        </button>
+                        {p.quantity > 1 && (
+                          <button
+                            onClick={() => openTrade(p, "trim")}
+                            className="rounded-lg border border-neutral-700 px-3 py-1 text-sm hover:bg-neutral-800"
+                          >
+                            Sälj del
+                          </button>
+                        )}
+                      </>
+                    )}
                     {p.status === "open" && (
                       <button
                         onClick={() => closePosition(p.id)}
@@ -1189,7 +1288,7 @@ function PortfolioAdmin() {
                         Close
                       </button>
                     )}
-                    {p.status === "closed" && (
+                    {p.status === "closed" && !p.parent_position_id && (
                       <button
                         onClick={() => reopenPosition(p.id)}
                         className="rounded-lg border border-neutral-700 px-3 py-1 text-sm hover:bg-neutral-800"
@@ -1205,6 +1304,19 @@ function PortfolioAdmin() {
                     </button>
                   </div>
                 </div>
+              )}
+              {editingId !== p.id && trade?.id === p.id && p.status === "open" && p.quantity != null && (
+                <TradePanel
+                  position={p}
+                  mode={trade.mode}
+                  qty={tradeQty}
+                  setQty={setTradeQty}
+                  quote={tradeQuote}
+                  busy={tradeBusy}
+                  error={tradeError}
+                  onConfirm={() => submitTrade(p)}
+                  onCancel={() => setTrade(null)}
+                />
               )}
             </div>
           ))}
@@ -1229,6 +1341,105 @@ function PortfolioAdmin() {
         }
       `}</style>
     </>
+  );
+}
+
+// "Köp mer" / "Sälj del": a quantity, the live price it would happen at, and a preview of what
+// it does to the position. The real price and calculation are done by the server.
+function TradePanel({
+  position: p,
+  mode,
+  qty,
+  setQty,
+  quote,
+  busy,
+  error,
+  onConfirm,
+  onCancel,
+}: {
+  position: Position;
+  mode: "add" | "trim";
+  qty: string;
+  setQty: (v: string) => void;
+  quote: { ask: number | null; bid: number | null; loaded: boolean };
+  busy: boolean;
+  error: string | null;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const held = Number(p.quantity);
+  const gav = Number(p.entry_price);
+  const n = Number(qty.replace(",", "."));
+  const price = mode === "add" ? quote.ask : quote.bid;
+  const qtyOk = Number.isFinite(n) && n > 0 && (mode === "add" || n < held);
+  const sek = (v: number) => `${v >= 0 ? "+" : ""}${v.toLocaleString("sv-SE", { maximumFractionDigits: 0 })} SEK`;
+  const f2 = (v: number) => v.toFixed(2);
+
+  let preview: React.ReactNode = null;
+  if (qtyOk && price != null) {
+    if (mode === "add") {
+      const newGav = gavAfterAdd(held, gav, n, price);
+      preview = (
+        <>
+          Efter köpet: {held + n} kontrakt, GAV {f2(newGav)} (nu {f2(gav)}). Kostar ca {(n * price).toLocaleString("sv-SE", { maximumFractionDigits: 0 })} SEK.
+        </>
+      );
+    } else {
+      const realized = realizedOnTrim(gav, n, price);
+      preview = (
+        <>
+          Realiserat: <span className={realized >= 0 ? "text-emerald-400" : "text-red-400"}>{sek(realized)}</span>. Kvar: {held - n} kontrakt, GAV oförändrat {f2(gav)}.
+        </>
+      );
+    }
+  }
+
+  return (
+    <div className="mt-3 rounded-lg border border-neutral-800 bg-neutral-950/50 p-3">
+      <div className="mb-2 text-sm font-medium text-neutral-200">
+        {mode === "add" ? "Köp mer" : "Sälj del"} · {p.name}
+        <span className="ml-2 font-normal text-neutral-500">
+          Du håller {held} kontrakt, {p.adds && p.adds > 0 ? "GAV" : "ingångskurs"} {f2(gav)}
+        </span>
+      </div>
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="w-44">
+          <span className="mb-1 block text-xs text-neutral-500">{mode === "add" ? "Antal att köpa till" : `Antal att sälja (högst ${held - 1})`}</span>
+          <input value={qty} onChange={(e) => setQty(e.target.value)} inputMode="decimal" className="input" />
+        </label>
+        <div className="text-sm text-neutral-300">
+          {!quote.loaded ? (
+            <span className="text-neutral-500">Hämtar kurs…</span>
+          ) : price == null ? (
+            <span className="text-red-400">Ingen {mode === "add" ? "köpkurs (ask)" : "säljkurs (bid)"} finns just nu.</span>
+          ) : (
+            <>
+              {mode === "add" ? "Köpkurs (ask)" : "Säljkurs (bid)"} <span className="font-medium text-neutral-100">{f2(price)}</span>
+              <span className="ml-1 text-xs text-neutral-500">live, hämtas om när du bekräftar</span>
+            </>
+          )}
+        </div>
+      </div>
+      {preview && <p className="mt-2 text-sm text-neutral-300">{preview}</p>}
+      {qty.trim() !== "" && !qtyOk && (
+        <p className="mt-2 text-sm text-red-400">
+          {mode === "add" ? "Ange ett antal större än 0." : `Ange ett antal mellan 1 och ${held - 1}. Vill du sälja allt, använd Close.`}
+        </p>
+      )}
+      {error && <p className="mt-2 text-sm text-red-400">{error}</p>}
+      <div className="mt-3 flex gap-2">
+        <button
+          onClick={onConfirm}
+          disabled={busy || !qtyOk || price == null}
+          className="rounded-lg bg-neutral-100 px-4 py-1.5 text-sm font-medium text-neutral-900 hover:bg-white disabled:opacity-50"
+        >
+          {busy ? "Genomför…" : mode === "add" ? "Köp till" : "Sälj"}
+        </button>
+        <button onClick={onCancel} className="rounded-lg border border-neutral-700 px-4 py-1.5 text-sm hover:bg-neutral-800">
+          Avbryt
+        </button>
+      </div>
+    </div>
   );
 }
 

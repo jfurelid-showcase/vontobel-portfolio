@@ -21,10 +21,25 @@ type Position = {
   exit_price: number | null;
   exit_time: string | null;
   status: "open" | "closed";
-  close_reason?: string | null; // "stop_loss" | "take_profit" when closed automatically
+  close_reason?: string | null; // "stop_loss" | "take_profit" when closed automatically, "trim" for a part-sale
+  adds?: number | null;
+  parent_position_id?: string | null; // set on the closed row a part-sale creates
 };
 
-type TradeEvent = { key: string; ts: string; kind: "open" | "close"; p: Position };
+// One entry in the journal of a position that has been added to or partly sold
+// (position_fills): the opening, each "Köp mer" and each "Sälj del".
+type Fill = {
+  id: number;
+  position_id: string;
+  ts: string;
+  kind: "open" | "add" | "trim";
+  quantity: number;
+  price: number;
+  avg_cost: number; // the GAV right after this event
+  realized_pl_sek: number | null; // part-sales only
+};
+
+type TradeEvent = { key: string; ts: string; kind: "open" | "close"; p: Position; fill?: Fill };
 
 const TZ = "Europe/Stockholm";
 
@@ -63,6 +78,7 @@ function dirLabel(d: string | null | undefined) {
 export default function TradeLog() {
   const { id: portfolioId } = usePortfolio();
   const [positions, setPositions] = useState<Position[]>([]);
+  const [fills, setFills] = useState<Fill[]>([]);
   const [baseCapital, setBaseCapital] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -73,6 +89,15 @@ export default function TradeLog() {
       .eq("portfolio_id", portfolioId)
       .order("entry_time", { ascending: false });
     setPositions((data as Position[]) ?? []);
+    // The journal of buys and part-sales. If the table doesn't exist yet (0006_add_trim.sql
+    // not run) the log simply works from the positions alone, as before.
+    const { data: f, error: fErr } = await supabase
+      .from("position_fills")
+      .select("id, position_id, ts, kind, quantity, price, avg_cost, realized_pl_sek")
+      .eq("portfolio_id", portfolioId)
+      .order("ts", { ascending: true })
+      .order("id", { ascending: true });
+    setFills(fErr ? [] : ((f as Fill[]) ?? []));
     setLoading(false);
   }
 
@@ -118,9 +143,24 @@ export default function TradeLog() {
   }, [positions]);
 
   const days = useMemo(() => {
+    // A position with a journal shows each buy and part-sale as its own event (at the time and
+    // price it really happened); the sold parts' own closed rows are skipped, since the
+    // part-sale event already covers them. Other positions show open/close as before.
+    const fillsBy = new Map<string, Fill[]>();
+    for (const f of fills) fillsBy.set(f.position_id, [...(fillsBy.get(f.position_id) ?? []), f]);
+
     const events: TradeEvent[] = [];
     for (const p of positions) {
-      events.push({ key: `${p.id}-open`, ts: p.entry_time, kind: "open", p });
+      // (Only when the journal is there to show the part-sale; otherwise it stays a closed trade.)
+      if (p.parent_position_id && fillsBy.has(p.parent_position_id)) continue;
+      const fl = fillsBy.get(p.id);
+      if (fl && fl.length > 0) {
+        for (const f of fl) {
+          events.push({ key: `fill-${f.id}`, ts: f.ts, kind: f.kind === "trim" ? "close" : "open", p, fill: f });
+        }
+      } else {
+        events.push({ key: `${p.id}-open`, ts: p.entry_time, kind: "open", p });
+      }
       if (p.status === "closed") {
         events.push({ key: `${p.id}-close`, ts: p.exit_time ?? p.entry_time, kind: "close", p });
       }
@@ -140,19 +180,20 @@ export default function TradeLog() {
       const evs = byDay.get(day)!;
       const realized = evs
         .filter((e) => e.kind === "close")
-        .reduce((s, e) => s + plOf(e.p, closePrice(e.p)), 0);
+        .reduce((s, e) => s + (e.fill ? Number(e.fill.realized_pl_sek ?? 0) : plOf(e.p, closePrice(e.p))), 0);
       cumulative += realized;
       return {
         day,
         events: evs.slice().sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime()),
         realized,
         cumulative,
-        opened: evs.filter((e) => e.kind === "open").length,
-        closed: evs.filter((e) => e.kind === "close").length,
+        // new positions and full closes (buying more / selling part are not counted as either)
+        opened: evs.filter((e) => e.kind === "open" && e.fill?.kind !== "add").length,
+        closed: evs.filter((e) => e.kind === "close" && e.fill?.kind !== "trim").length,
       };
     });
     return built.reverse();
-  }, [positions]);
+  }, [positions, fills]);
 
   const totalPct = baseCapital ? (summary.total / baseCapital) * 100 : null;
 
@@ -225,17 +266,41 @@ export default function TradeLog() {
 }
 
 function EventRow({ ev }: { ev: TradeEvent }) {
-  const { p, kind } = ev;
+  const { p, kind, fill } = ev;
   const isLong = p.direction?.toLowerCase() === "long";
   const isShort = p.direction?.toLowerCase() === "short";
-  const price = kind === "open" ? p.entry_price : closePrice(p);
+  // A journal event carries its own price and quantity; otherwise it is the position's own.
+  const price = fill ? Number(fill.price) : kind === "open" ? p.entry_price : closePrice(p);
+  const qty = fill ? Number(fill.quantity) : p.quantity;
+  const label = fill?.kind === "add" ? "KÖPT TILL" : fill?.kind === "trim" ? "SÅLD DEL" : kind === "open" ? "ÖPPNAD" : "STÄNGD";
   const leverage = p.leverage ? `${p.leverage}x` : p.instrument_type ?? "";
 
   // Close rows carry the realized result. An open row for a position that is
   // still open shows its running (unrealized) result; for one that has since
   // been closed the result lives on its close row, so it shows a dash.
   let plCell: React.ReactNode = <span className="text-neutral-600">–</span>;
-  if (kind === "close") {
+  if (fill?.kind === "trim") {
+    const pl = Number(fill.realized_pl_sek ?? 0);
+    const change = ((price - Number(fill.avg_cost)) / Number(fill.avg_cost)) * 100;
+    plCell = (
+      <>
+        <div className={`text-sm font-semibold ${tone(pl)}`}>{sek(pl)}</div>
+        <div className={`text-xs ${tone(pl)}`}>{pctStr(change)}</div>
+      </>
+    );
+  } else if (fill && p.status === "open") {
+    // A buy: how that purchase is doing now.
+    const pl = fill.quantity * (livePrice(p) - fill.price);
+    const change = ((livePrice(p) - fill.price) / fill.price) * 100;
+    plCell = (
+      <>
+        <div className={`text-sm font-medium opacity-80 ${tone(pl)}`}>{sek(pl)}</div>
+        <div className="text-[11px] text-neutral-500">orealiserat · {pctStr(change)}</div>
+      </>
+    );
+  } else if (fill) {
+    plCell = <span className="text-neutral-600">–</span>;
+  } else if (kind === "close") {
     const pl = plOf(p, closePrice(p));
     const change = ((closePrice(p) - p.entry_price) / p.entry_price) * 100;
     plCell = (
@@ -261,11 +326,11 @@ function EventRow({ ev }: { ev: TradeEvent }) {
     <div className="flex items-center gap-3 border-t border-neutral-800 px-4 py-3">
       <div className="w-11 shrink-0 text-xs tabular-nums text-neutral-500">{timeOf(ev.ts)}</div>
       <span
-        className={`w-14 shrink-0 rounded-md px-2 py-0.5 text-center text-[11px] font-medium tracking-wide ${
+        className={`w-[4.9rem] shrink-0 whitespace-nowrap rounded-md px-2 py-0.5 text-center text-[11px] font-medium tracking-wide ${
           kind === "open" ? "bg-sky-500/15 text-sky-300" : "bg-neutral-100/10 text-neutral-200"
         }`}
       >
-        {kind === "open" ? "ÖPPNAD" : "STÄNGD"}
+        {label}
       </span>
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-medium text-neutral-100">{p.name}</div>
@@ -273,9 +338,11 @@ function EventRow({ ev }: { ev: TradeEvent }) {
           {p.underlying ? `${p.underlying} · ` : ""}
           <span className={isLong ? "text-emerald-400" : isShort ? "text-red-400" : ""}>{dirLabel(p.direction)}</span>
           {leverage ? ` ${leverage}` : ""}
-          {p.quantity != null ? ` · ${p.quantity} @ ${price.toFixed(2)}` : ` · @ ${price.toFixed(2)}`}
-          {kind === "close" && p.close_reason === "stop_loss" && <span className="text-amber-300"> · automatisk stop loss</span>}
-          {kind === "close" && p.close_reason === "take_profit" && <span className="text-amber-300"> · automatiskt mål</span>}
+          {qty != null ? ` · ${qty} @ ${price.toFixed(2)}` : ` · @ ${price.toFixed(2)}`}
+          {fill?.kind === "add" && <span className="text-neutral-400"> · GAV nu {Number(fill.avg_cost).toFixed(2)}</span>}
+          {fill?.kind === "trim" && <span className="text-neutral-400"> · GAV {Number(fill.avg_cost).toFixed(2)}</span>}
+          {kind === "close" && !fill && p.close_reason === "stop_loss" && <span className="text-amber-300"> · automatisk stop loss</span>}
+          {kind === "close" && !fill && p.close_reason === "take_profit" && <span className="text-amber-300"> · automatiskt mål</span>}
         </div>
       </div>
       <div className="shrink-0 text-right">{plCell}</div>

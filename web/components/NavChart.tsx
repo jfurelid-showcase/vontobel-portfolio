@@ -14,7 +14,16 @@ type TradeEvent = {
   price: number;
   quantity: number | null;
   pl: number | null; // only set for "close"
+  // Set when the position was closed automatically by its stop loss / target.
+  reason: "stop_loss" | "take_profit" | null;
+  // "add" = bought more of a position, "trim" = sold part of one. (kind stays "open" for a
+  // buy and "close" for a sale, so colours and marker shapes follow the same rules.)
+  sub: "add" | "trim" | null;
 };
+
+// Automatic closes get an amber outline so they stand out from closes you made yourself.
+const AUTO_COLOR = "#fbbf24";
+const autoWord = (r: "stop_loss" | "take_profit") => (r === "stop_loss" ? "stop loss" : "mål");
 
 // Data comes from the nav_series() database function (see nav_series.sql):
 //   1D  = every tick since Stockholm midnight (10-second resolution)
@@ -263,15 +272,49 @@ export default function NavChart({ history: _history, portfolioName }: { history
       return;
     }
     let cancelled = false;
-    supabase
-      .from("portfolio_positions")
-      .select("id, name, direction, entry_time, exit_time, entry_price, exit_price, quantity, stake_sek")
-      .eq("portfolio_id", portfolioId)
-      .then(({ data, error }) => {
+    const COLS = "id, name, direction, entry_time, exit_time, entry_price, exit_price, quantity, stake_sek";
+    // close_reason (0003_auto_close.sql) and parent_position_id (0006_add_trim.sql) may not
+    // exist in the database yet; ask again with fewer columns so the markers still show.
+    (async () => {
+      const from = () => supabase.from("portfolio_positions");
+      let res: any = await from().select(`${COLS}, close_reason, parent_position_id`).eq("portfolio_id", portfolioId);
+      if (res.error) res = await from().select(`${COLS}, close_reason`).eq("portfolio_id", portfolioId);
+      if (res.error) res = await from().select(COLS).eq("portfolio_id", portfolioId);
+      // The journal of buys and part-sales (position_fills); absent until 0006_add_trim.sql has run.
+      const j: any = await supabase
+        .from("position_fills")
+        .select("id, position_id, ts, kind, quantity, price, realized_pl_sek")
+        .eq("portfolio_id", portfolioId)
+        .order("ts", { ascending: true });
+      return { ...res, fills: j.error ? [] : j.data ?? [] };
+    })()
+      .then(({ data, error, fills }: { data: any[] | null; error: unknown; fills: any[] }) => {
         if (cancelled || error || !data) return;
         const events: TradeEvent[] = [];
+        const fillsBy = new Map<string, any[]>();
+        for (const f of fills) fillsBy.set(f.position_id, [...(fillsBy.get(f.position_id) ?? []), f]);
         for (const p of data as any[]) {
-          if (p.entry_time && stockholmDay(p.entry_time) === dayKey) {
+          // The closed row a part-sale creates is covered by the part-sale event below
+          // (if the journal can't be read, it is shown as the closed trade it is).
+          if (p.parent_position_id && fillsBy.has(p.parent_position_id)) continue;
+          const fl = fillsBy.get(p.id);
+          if (fl && fl.length > 0) {
+            // A position that has a journal: each buy and part-sale at the time and price it happened.
+            for (const f of fl) {
+              if (stockholmDay(f.ts) !== dayKey) continue;
+              events.push({
+                ts: f.ts,
+                kind: f.kind === "trim" ? "close" : "open",
+                name: p.name,
+                direction: p.direction,
+                price: Number(f.price),
+                quantity: Number(f.quantity),
+                pl: f.kind === "trim" ? Number(f.realized_pl_sek ?? 0) : null,
+                reason: null,
+                sub: f.kind === "add" ? "add" : f.kind === "trim" ? "trim" : null,
+              });
+            }
+          } else if (p.entry_time && stockholmDay(p.entry_time) === dayKey) {
             events.push({
               ts: p.entry_time,
               kind: "open",
@@ -280,6 +323,8 @@ export default function NavChart({ history: _history, portfolioName }: { history
               price: Number(p.entry_price),
               quantity: p.quantity != null ? Number(p.quantity) : null,
               pl: null,
+              reason: null,
+              sub: null,
             });
           }
           if (p.exit_time && stockholmDay(p.exit_time) === dayKey) {
@@ -295,6 +340,8 @@ export default function NavChart({ history: _history, portfolioName }: { history
               price: Number(p.exit_price),
               quantity: p.quantity != null ? Number(p.quantity) : null,
               pl,
+              reason: p.close_reason === "stop_loss" || p.close_reason === "take_profit" ? p.close_reason : null,
+              sub: null,
             });
           }
         }
@@ -487,9 +534,10 @@ export default function NavChart({ history: _history, portfolioName }: { history
     // before the axis labels so label text always stays readable on top.
     tradeAnchors.forEach((a, i) => {
       const t = visibleTrades[i];
-      const color = t.kind === "open" ? "#38bdf8" : t.pl != null && t.pl >= 0 ? "#34d399" : "#f87171";
+      const isAuto = t.kind === "close" && !!t.reason;
+      const color = isAuto ? AUTO_COLOR : t.kind === "open" ? "#38bdf8" : t.pl != null && t.pl >= 0 ? "#34d399" : "#f87171";
       ctx.save();
-      ctx.globalAlpha = 0.55;
+      ctx.globalAlpha = isAuto ? 0.8 : 0.55;
       ctx.strokeStyle = color;
       ctx.lineWidth = 1;
       ctx.setLineDash([2, 3]);
@@ -536,10 +584,11 @@ export default function NavChart({ history: _history, portfolioName }: { history
         const my = svgH - 9;
         const isOpen = t.kind === "open";
         const color = isOpen ? "#38bdf8" : t.pl != null && t.pl >= 0 ? "#34d399" : "#f87171";
+        const isAuto = !isOpen && !!t.reason;
         const size = 6;
         ctx.fillStyle = color;
-        ctx.strokeStyle = "#171717";
-        ctx.lineWidth = 1;
+        ctx.strokeStyle = isAuto ? AUTO_COLOR : "#171717";
+        ctx.lineWidth = isAuto ? 2 : 1;
         ctx.beginPath();
         if (isOpen) {
           ctx.moveTo(mx - size, my + size);
@@ -568,7 +617,8 @@ export default function NavChart({ history: _history, portfolioName }: { history
       let ly = originY + svgH + 14;
       dayTrades.forEach((t, i) => {
         const timeLabel = new Date(t.ts).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Stockholm" });
-        const kindLabel = t.kind === "open" ? "Öppnad" : "Stängd";
+        const kindLabel =
+          t.sub === "add" ? "Köpt till" : t.sub === "trim" ? "Såld del" : t.kind === "open" ? "Öppnad" : "Stängd";
         const resultColor = t.kind === "open" ? "#38bdf8" : t.pl != null && t.pl >= 0 ? "#34d399" : "#f87171";
         const name = t.name.length > 20 ? t.name.slice(0, 19) + "…" : t.name;
         const value = t.quantity != null ? t.quantity * t.price : null;
@@ -591,6 +641,14 @@ export default function NavChart({ history: _history, portfolioName }: { history
 
         if (value != null) {
           ctx.fillText(`Värde ${value.toLocaleString("sv-SE", { maximumFractionDigits: 0 })} SEK`, originX + 420, ly);
+        }
+
+        if (t.kind === "close" && t.reason) {
+          ctx.textAlign = "left";
+          ctx.fillStyle = AUTO_COLOR;
+          ctx.font = "600 10px system-ui, sans-serif";
+          ctx.fillText(`Auto ${autoWord(t.reason)}`, originX + 540, ly);
+          ctx.font = "400 10px system-ui, sans-serif";
         }
 
         if (t.kind === "close" && t.pl != null) {
@@ -952,6 +1010,8 @@ export default function NavChart({ history: _history, portfolioName }: { history
               const my = height - 9;
               const isOpen = t.kind === "open";
               const color = isOpen ? "#38bdf8" : t.pl != null && t.pl >= 0 ? UP_COLOR : DOWN_COLOR;
+              const isAuto = !isOpen && !!t.reason;
+              const accent = isAuto ? AUTO_COLOR : color; // outline / guide colour
               const size = 6;
               const points_ = isOpen
                 ? `${t.mx - size},${my + size} ${t.mx + size},${my + size} ${t.mx},${my - size}` // up-triangle
@@ -975,19 +1035,19 @@ export default function NavChart({ history: _history, portfolioName }: { history
                     x2={t.mx}
                     y1={t.cy}
                     y2={my - size - 1}
-                    stroke={color}
+                    stroke={accent}
                     strokeWidth={isHovered ? 1.5 : 1}
                     strokeDasharray="2 3"
-                    opacity={isHovered ? 1 : 0.55}
+                    opacity={isHovered ? 1 : isAuto ? 0.8 : 0.55}
                   />
                   {/* Ring on the curve itself where the trade happened */}
-                  <circle cx={t.mx} cy={t.cy} r={isHovered ? 5 : 3.5} fill="#171717" stroke={color} strokeWidth="2" />
+                  <circle cx={t.mx} cy={t.cy} r={isHovered ? 5 : 3.5} fill="#171717" stroke={accent} strokeWidth="2" />
                   <circle cx={t.mx} cy={my} r="12" fill="transparent" />
                   <polygon
                     points={points_}
                     fill={color}
-                    stroke={isHovered ? "#ffffff" : "#171717"}
-                    strokeWidth={isHovered ? "1.5" : "1"}
+                    stroke={isHovered ? "#ffffff" : isAuto ? AUTO_COLOR : "#171717"}
+                    strokeWidth={isHovered || isAuto ? "2" : "1"}
                   />
                 </g>
               );
@@ -1003,17 +1063,34 @@ export default function NavChart({ history: _history, portfolioName }: { history
                 minute: "2-digit",
                 timeZone: "Europe/Stockholm",
               });
-              const kindLabel = t.kind === "open" ? "ÖPPNAD" : "STÄNGD";
+              const isAuto = t.kind === "close" && !!t.reason;
+              const kindLabel =
+                t.sub === "add"
+                  ? "KÖPT TILL"
+                  : t.sub === "trim"
+                    ? "SÅLD DEL"
+                    : t.kind === "open"
+                      ? "ÖPPNAD"
+                      : isAuto
+                        ? `STÄNGD · AUTO ${autoWord(t.reason!).toUpperCase()}`
+                        : "STÄNGD";
               const color = t.kind === "open" ? "#38bdf8" : t.pl != null && t.pl >= 0 ? UP_COLOR : DOWN_COLOR;
               const value = t.quantity != null ? t.quantity * t.price : null;
-              const boxW = 160;
+              const boxW = isAuto ? 200 : 160; // the automatic wording needs more room
               const boxH = (t.kind === "close" ? 54 : 40) + (value != null ? 13 : 0);
               const boxX = Math.min(Math.max(t.mx - boxW / 2, padding.left), width - padding.right - boxW);
               const boxY = padding.top + plotH - boxH - 14;
               return (
                 <g pointerEvents="none">
                   <rect x={boxX} y={boxY} width={boxW} height={boxH} rx="6" fill="#171717" stroke="#3f3f46" />
-                  <text x={boxX + boxW / 2} y={boxY + 14} textAnchor="middle" fontSize="10" fill="#a1a1aa">
+                  <text
+                    x={boxX + boxW / 2}
+                    y={boxY + 14}
+                    textAnchor="middle"
+                    fontSize="10"
+                    fontWeight={isAuto ? 600 : 400}
+                    fill={isAuto ? AUTO_COLOR : "#a1a1aa"}
+                  >
                     {timeLabel} · {kindLabel}
                   </text>
                   <text x={boxX + boxW / 2} y={boxY + 28} textAnchor="middle" fontSize="11" fontWeight={600} fill="#e4e4e7">
@@ -1068,12 +1145,24 @@ export default function NavChart({ history: _history, portfolioName }: { history
             style={{ cursor: "crosshair" }}
           />
         </svg>
-        {periodChange != null && (
-          <div className={`mt-1 text-right text-xs ${isUp ? "text-emerald-400" : "text-red-400"}`}>
-            {isUp ? "+" : ""}
-            {periodChange.toFixed(2)}% under perioden
-          </div>
-        )}
+        <div className="mt-1 flex items-center justify-between gap-3 text-xs">
+          {isDaily && tradeMarkers.some((t) => t.kind === "close" && t.reason) ? (
+            <span className="flex items-center gap-1.5 text-amber-300/90">
+              <svg width="11" height="11" viewBox="0 0 12 12" aria-hidden="true">
+                <path d="M1.5 2h9L6 10.5z" fill="none" stroke={AUTO_COLOR} strokeWidth="1.8" strokeLinejoin="round" />
+              </svg>
+              Stängd automatiskt av stop loss eller mål
+            </span>
+          ) : (
+            <span />
+          )}
+          {periodChange != null && (
+            <span className={`text-right ${isUp ? "text-emerald-400" : "text-red-400"}`}>
+              {isUp ? "+" : ""}
+              {periodChange.toFixed(2)}% under perioden
+            </span>
+          )}
+        </div>
       </>
     );
   }, [points, range, hoverIdx, visibleTrades, hoverTradeIdx, isMobile]);

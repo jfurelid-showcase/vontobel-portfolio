@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { portfolioOfPosition, requireAccess } from "@/lib/auth";
 import { updatePositionWithOptional } from "@/lib/optionalColumns";
 
@@ -12,6 +13,16 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (portfolioId == null) return NextResponse.json({ error: "Position not found" }, { status: 404 });
   const access = await requireAccess(req, portfolioId);
   if (!access.ok) return access.res;
+
+  // A part-sale (the closed row made when you sell part of a position) can't be
+  // reopened: it would count the same contracts twice. Buy more of the position instead.
+  const { data: pos } = await supabaseAdmin.from("portfolio_positions").select("*").eq("id", params.id).maybeSingle();
+  if (pos?.parent_position_id) {
+    return NextResponse.json(
+      { error: "En delförsäljning kan inte öppnas igen. Använd Köp mer i den kvarvarande positionen." },
+      { status: 409 }
+    );
+  }
 
   const { data, error } = await updatePositionWithOptional(
     params.id,

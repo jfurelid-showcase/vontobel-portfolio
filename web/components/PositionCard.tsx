@@ -21,6 +21,13 @@ type Position = {
   exit_price: number | null;
   note: string | null;
   podcast_episode: string | null;
+  // How many times it has been added to (then entry_price is the GAV), and, on the closed
+  // row a part-sale creates, which open position it was sold from.
+  adds?: number | null;
+  parent_position_id?: string | null;
+  // Latest quote seen by the worker: what it could be sold for (bid) and bought for (ask).
+  current_bid?: number | null;
+  current_ask?: number | null;
   // Automatic stop loss / target (null/undefined before the database has them).
   auto_stop?: boolean | null;
   auto_target?: boolean | null;
@@ -30,7 +37,11 @@ type Position = {
 const CLOSE_REASON_TEXT: Record<string, string> = {
   stop_loss: "stängdes automatiskt vid stop loss",
   take_profit: "stängdes automatiskt vid målet",
+  trim: "såld del av en position",
 };
+
+// "Ingångspris" until you have bought more; then it is the average price paid, the GAV.
+const entryLabel = (p: { adds?: number | null }) => (p.adds && p.adds > 0 ? "GAV" : "Ingångspris");
 
 function pct(from: number, to: number) {
   return ((to - from) / from) * 100;
@@ -164,7 +175,7 @@ function exportPositionCard(p: Position) {
   y += 28;
 
   const stats: [string, string, string?][] = [
-    ["Ingångspris", fmt2(p.entry_price)],
+    [entryLabel(p), fmt2(p.entry_price)],
     ["Stop loss", fmt2(p.stop_loss), toStop != null ? `${toStop.toFixed(2)}%` : undefined],
     [p.status === "closed" ? "Utgångspris" : "Pris", fmt2(price)],
     ["Mål", fmt2(p.target_price), toTarget != null ? `+${toTarget.toFixed(2)}%` : undefined],
@@ -235,7 +246,7 @@ function exportPositionCard(p: Position) {
   }, "image/png");
 }
 
-export default function PositionCard({ p }: { p: Position }) {
+export default function PositionCard({ p, sold }: { p: Position; sold?: { quantity: number; realized: number } }) {
   const price = p.status === "closed" ? p.exit_price! : p.current_price ?? p.entry_price;
   const change = pct(p.entry_price, price);
   const isUp = change >= 0;
@@ -284,7 +295,7 @@ export default function PositionCard({ p }: { p: Position }) {
       </div>
 
       <div className="grid grid-cols-2 gap-y-3 text-sm">
-        <Stat label="Ingångspris" value={p.entry_price} />
+        <Stat label={entryLabel(p)} value={p.entry_price} />
         <Stat
           label="Stop loss"
           value={p.stop_loss}
@@ -311,6 +322,23 @@ export default function PositionCard({ p }: { p: Position }) {
           <> · {CLOSE_REASON_TEXT[p.close_reason]}</>
         )}
       </div>
+
+      {p.status === "open" && sold && sold.quantity > 0 && (
+        <div className="mt-1 text-xs text-neutral-400">
+          Sålt {sold.quantity} kontrakt tidigare ·{" "}
+          <span className={sold.realized >= 0 ? "text-emerald-400" : "text-red-400"}>
+            {sold.realized >= 0 ? "+" : ""}
+            {sold.realized.toLocaleString("sv-SE", { maximumFractionDigits: 0 })} SEK realiserat
+          </span>
+        </div>
+      )}
+
+      {p.status === "open" && p.current_bid != null && p.current_ask != null && p.current_ask > 0 && (
+        <div className="mt-1 text-xs text-neutral-500">
+          Säljkurs (bid) {fmt2(p.current_bid)} · Köpkurs (ask) {fmt2(p.current_ask)} · spread{" "}
+          {(((p.current_ask - p.current_bid) / p.current_ask) * 100).toFixed(2)}%
+        </div>
+      )}
 
       <TradeNote note={p.note} podcastEpisode={p.podcast_episode} />
     </div>

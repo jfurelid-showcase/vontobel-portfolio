@@ -4,11 +4,26 @@ import { portfolioOfPosition, requireAccess } from "@/lib/auth";
 import { validateAuto } from "@/lib/autoClose";
 import { isMissingColumn } from "@/lib/optionalColumns";
 
-// PATCH: edit any of a position's editable fields (works for open or closed
-// positions — e.g. fixing a typo'd entry price, adjusting stop/target,
-// correcting the note, or even the exit price on a closed trade).
-// Body: any subset of { entry_price, quantity, stop_loss, target_price,
-//                        exit_price, note, podcast_episode, auto_stop, auto_target }
+// Equal as numbers (an unset value equals another unset value).
+function sameNumber(a: unknown, b: unknown): boolean {
+  const na = a == null || a === "" ? null : Number(a);
+  const nb = b == null || b === "" ? null : Number(b);
+  if (na == null || nb == null) return na == null && nb == null;
+  return Number.isFinite(na) && Number.isFinite(nb) && Math.abs(na - nb) < 1e-9;
+}
+
+// PATCH: edit a position's editable fields (works for open or closed
+// positions — adjusting stop/target, the note ...).
+// Body: any subset of { stop_loss, target_price, note,
+//                        podcast_episode, auto_stop, auto_target }
+//
+// The QUANTITY can't be edited either: it changes only by buying more (Köp mer) or
+// selling part (Sälj del), which keep the GAV and the profit/loss correct.
+//
+// The ENTRY and EXIT prices can't be edited: the entry is always the ask at
+// the moment the position was added, the exit always the bid at the moment it
+// was closed. A request that tries to change either is refused (one that
+// merely repeats the stored value is accepted and ignored).
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   const portfolioId = await portfolioOfPosition(params.id);
   if (portfolioId == null) return NextResponse.json({ error: "Position not found" }, { status: 404 });
@@ -31,21 +46,40 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (key in body) updates[key] = body[key];
   }
 
-  // Keep stake_sek (used by the NAV worker) consistent whenever entry_price
-  // or quantity changes.
-  if (updates.entry_price != null || updates.quantity != null) {
-    const { data: existing, error: fetchErr } = await supabaseAdmin
+  // Entry price, exit price and quantity are locked (see above).
+  if ("entry_price" in updates || "exit_price" in updates || "quantity" in updates) {
+    const { data: stored, error: storedErr } = await supabaseAdmin
       .from("portfolio_positions")
-      .select("entry_price, quantity")
+      .select("entry_price, exit_price, quantity")
       .eq("id", params.id)
       .single();
-    if (fetchErr || !existing) {
-      return NextResponse.json({ error: "Position not found" }, { status: 404 });
+    if (storedErr || !stored) return NextResponse.json({ error: "Position not found" }, { status: 404 });
+    if ("quantity" in updates) {
+      if (!sameNumber(updates.quantity, stored.quantity)) {
+        return NextResponse.json(
+          { error: "Antalet kan inte ändras här. Använd Köp mer eller Sälj del, så räknas GAV och resultat rätt." },
+          { status: 400 }
+        );
+      }
+      delete updates.quantity;
     }
-    const entryPrice = (updates.entry_price as number) ?? existing.entry_price;
-    const quantity = (updates.quantity as number) ?? existing.quantity;
-    if (entryPrice != null && quantity != null) {
-      updates.stake_sek = entryPrice * quantity;
+    if ("entry_price" in updates) {
+      if (!sameNumber(updates.entry_price, stored.entry_price)) {
+        return NextResponse.json(
+          { error: "Ingångskursen kan inte ändras. Den sätts alltid till köpkursen (ask) när positionen läggs till." },
+          { status: 400 }
+        );
+      }
+      delete updates.entry_price;
+    }
+    if ("exit_price" in updates) {
+      if (!sameNumber(updates.exit_price, stored.exit_price)) {
+        return NextResponse.json(
+          { error: "Utgångskursen kan inte ändras. Den sätts alltid till säljkursen (bid) när positionen stängs." },
+          { status: 400 }
+        );
+      }
+      delete updates.exit_price;
     }
   }
 
@@ -87,6 +121,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     // before the database has the auto-close columns.
     if (autoStop !== (cur.auto_stop === true)) updates.auto_stop = autoStop;
     if (autoTarget !== (cur.auto_target === true)) updates.auto_target = autoTarget;
+  }
+
+  // Nothing left to change (the request only repeated locked values that are unchanged):
+  // that is not an error, the position is simply as it should be.
+  if (Object.keys(updates).length === 0) {
+    const { data: current } = await supabaseAdmin.from("portfolio_positions").select("*").eq("id", params.id).single();
+    if (!current) return NextResponse.json({ error: "Position not found" }, { status: 404 });
+    return NextResponse.json(current);
   }
 
   const { data, error } = await supabaseAdmin
