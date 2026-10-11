@@ -22,6 +22,7 @@
 
 import { chromium } from "playwright";
 import { createClient } from "@supabase/supabase-js";
+import { persistList, summarizeStatusFields } from "./persist.mjs";
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -123,13 +124,12 @@ async function main() {
       throw new Error("0 Vontobel rows fetched from the API — check inspect-api.mjs output, the request shape may have changed.");
     }
 
-    const BATCH = 500;
-    for (let i = 0; i < deduped.length; i += BATCH) {
-      const { error } = await supabase
-        .from("certificates_full")
-        .upsert(deduped.slice(i, i + BATCH), { onConflict: "isin" });
-      if (error) throw error;
-    }
+    console.log("Fields in NGM's list that describe a contract's state:");
+    for (const line of summarizeStatusFields(all)) console.log(line);
+
+    // Save the list, then hide contracts that have dropped out of it (knocked out, matured, withdrawn).
+    // DELIST=false switches the hiding off.
+    const saved = await persistList(supabase, deduped, { delist: process.env.DELIST !== "false" });
 
     await supabase
       .from("scrape_runs")
@@ -137,6 +137,8 @@ async function main() {
         finished_at: new Date().toISOString(),
         rows_written: deduped.length,
         ok: true,
+        // A note, not an error: what happened to contracts that left the list.
+        error: saved.delistingSkipped ? `Delisting skipped: ${saved.delistingSkipped}` : saved.statusColumns ? `Delisted ${saved.delisted.length}` : null,
       })
       .eq("id", run.id);
 

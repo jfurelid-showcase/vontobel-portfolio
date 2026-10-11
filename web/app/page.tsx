@@ -546,6 +546,13 @@ function PortfolioAdmin() {
   const [results, setResults] = useState<Cert[]>([]);
   const [selected, setSelected] = useState<Cert | null>(null);
   const [totalCount, setTotalCount] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [nextOffset, setNextOffset] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [searchedFor, setSearchedFor] = useState<string | null>(null); // the query the shown result belongs to
+  const [listUpdatedAt, setListUpdatedAt] = useState<string | null>(null);
+  const searchSeq = useRef(0); // only the newest search may write its result
   const [fullListCount, setFullListCount] = useState<number | null>(null);
   const [positions, setPositions] = useState<Position[]>([]);
   const [sortKey, setSortKey] = useState<keyof Cert>("last_price");
@@ -578,20 +585,70 @@ function PortfolioAdmin() {
       return;
     }
     const t = setTimeout(async () => {
+      const mine = ++searchSeq.current;
       if (query.trim().length < 2) {
         setResults([]);
         setTotalCount(0);
+        setHasMore(false);
+        setSearchError(null);
+        setSearchedFor(null);
         return;
       }
       const params = new URLSearchParams({ q: query });
       if (directionFilter) params.set("direction", directionFilter);
-      const res = await fetch(`/api/certificates/search?${params}`);
-      const { results, totalCount } = await res.json();
-      setResults(results || []);
-      setTotalCount(totalCount || 0);
+      try {
+        const res = await fetch(`/api/certificates/search?${params}`);
+        const body = await res.json().catch(() => ({}));
+        if (mine !== searchSeq.current) return; // a newer search has started: ignore this answer
+        if (!res.ok) {
+          setSearchError(body.error ? `Sökningen misslyckades: ${body.error}` : "Sökningen misslyckades. Försök igen om en stund.");
+          setResults([]);
+          setTotalCount(0);
+          setHasMore(false);
+          setSearchedFor(null);
+          return;
+        }
+        setSearchError(null);
+        setResults(body.results || []);
+        setTotalCount(body.totalCount || 0);
+        setHasMore(!!body.hasMore);
+        setNextOffset(body.nextOffset || 0);
+        if (body.listUpdatedAt) setListUpdatedAt(body.listUpdatedAt);
+        setSearchedFor(query.trim());
+      } catch {
+        if (mine === searchSeq.current) setSearchError("Kunde inte nå servern. Kontrollera uppkopplingen och försök igen.");
+      }
     }, 250);
     return () => clearTimeout(t);
   }, [query, directionFilter]);
+
+  // A broad search can match more contracts than fit in one answer; fetch the next batch.
+  async function loadMore() {
+    if (loadingMore || !hasMore) return;
+    const mine = searchSeq.current;
+    setLoadingMore(true);
+    try {
+      const params = new URLSearchParams({ q: query, offset: String(nextOffset) });
+      if (directionFilter) params.set("direction", directionFilter);
+      const res = await fetch(`/api/certificates/search?${params}`);
+      const body = await res.json().catch(() => ({}));
+      if (mine !== searchSeq.current) return; // the search changed while this was loading
+      if (!res.ok) {
+        setSearchError(body.error ? `Sökningen misslyckades: ${body.error}` : "Sökningen misslyckades. Försök igen om en stund.");
+        return;
+      }
+      setResults((prev) => {
+        const have = new Set(prev.map((r) => r.isin));
+        return [...prev, ...(body.results || []).filter((r: Cert) => !have.has(r.isin))];
+      });
+      setHasMore(!!body.hasMore);
+      setNextOffset(body.nextOffset || nextOffset);
+    } catch {
+      setSearchError("Kunde inte nå servern. Kontrollera uppkopplingen och försök igen.");
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   async function loadPositions() {
     const res = await authFetch(`/api/positions?portfolio_id=${portfolioId}`);
@@ -803,12 +860,32 @@ function PortfolioAdmin() {
         />
       </section>
 
+      {searchError && (
+        <div className="mb-6 rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-300">{searchError}</div>
+      )}
+
+      {!searchError && results.length === 0 && searchedFor !== null && searchedFor === query.trim() && (
+        <section className="mb-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-6 text-sm text-neutral-400">
+          <p className="mb-2 text-neutral-200">
+            Inga kontrakt matchade ”{searchedFor}”{directionFilter ? ` (endast ${directionFilter})` : ""}.
+          </p>
+          <ul className="list-disc space-y-1 pl-5">
+            <li>Alla ord du skriver måste finnas i namn, underliggande tillgång eller ISIN. Prova färre ord, till exempel bara AMZN eller serienumret (VT927).</li>
+            {directionFilter && <li>Riktningsfiltret ({directionFilter}) är på. Välj All för att se alla.</li>}
+            <li>
+              Nya kontrakt läggs till i listan en gång per dygn, kring kl 17:30 svensk tid. Ett kontrakt som börjat handlas i dag syns först i morgon.
+              {listUpdatedAt ? ` Listan uppdaterades senast ${new Date(listUpdatedAt).toLocaleString("sv-SE")}.` : ""}
+            </li>
+          </ul>
+        </section>
+      )}
+
       {results.length > 0 && (
         <section className="mb-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-6">
           <div className="mb-3 text-sm text-neutral-400">
-            Showing {results.length} of {totalCount} contract{totalCount === 1 ? "" : "s"}
-            {directionFilter ? ` (${directionFilter} only)` : ""}
-            {totalCount > results.length ? ` — fetched sorted by turnover; click any column header below to re-sort` : ""}
+            Visar {results.length} av {totalCount} kontrakt
+            {directionFilter ? ` (endast ${directionFilter})` : ""}
+            {hasMore ? ` — mest handlade först. Skriv fler ord (till exempel serienumret, VT927) eller klicka Visa fler längst ner.` : ""}
           </div>
           <div className="max-h-[32rem] overflow-y-auto rounded-lg border border-neutral-800">
             <table className="w-full text-left text-sm">
@@ -891,6 +968,20 @@ function PortfolioAdmin() {
                 })}
               </tbody>
             </table>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-neutral-500">
+            <span>
+              {listUpdatedAt ? `Kontraktslistan uppdaterades senast ${new Date(listUpdatedAt).toLocaleString("sv-SE")}.` : ""}
+            </span>
+            {hasMore && (
+              <button
+                onClick={loadMore}
+                disabled={loadingMore}
+                className="rounded-lg border border-neutral-700 px-3 py-1.5 text-sm font-medium text-neutral-200 hover:bg-neutral-800 disabled:opacity-50"
+              >
+                {loadingMore ? "Hämtar…" : `Visa fler (${Math.min(500, totalCount - results.length)} till)`}
+              </button>
+            )}
           </div>
         </section>
       )}
