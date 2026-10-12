@@ -15,6 +15,7 @@ import MarketStatus from "@/components/MarketStatus";
 import TabMenu from "@/components/TabMenu";
 import PositionsExportButton from "@/components/PositionsExport";
 import AdminTab from "@/components/AdminTab";
+import GuestDisclaimer from "@/components/GuestDisclaimer";
 import { PortfolioProvider, usePortfolio } from "@/lib/portfolioClient";
 import { useResync } from "@/lib/useResync";
 import { useMarketOpen } from "@/lib/useMarketOpen";
@@ -108,12 +109,18 @@ function HomeInner() {
   }
 
   const adminLabel = portfolio.admin ? "Admin" : portfolio.token ? "Min portfölj" : "Admin";
-  const content =
-    tab === "dashboard" ? (
-      <Dashboard />
-    ) : tab === "trades" ? (
-      <TradeLog />
-    ) : (
+        const content =
+        tab === "dashboard" ? (
+          <>
+            <Dashboard />
+            {!portfolio.isOwner && <GuestDisclaimer />}
+          </>
+        ) : tab === "trades" ? (
+          <>
+            <TradeLog />
+            {!portfolio.isOwner && <GuestDisclaimer />}
+          </>
+        ) : (
       <AdminTab>
         <PortfolioAdmin />
       </AdminTab>
