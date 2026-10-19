@@ -88,151 +88,26 @@ async function ensureBrowser() {
   apiContext = page.context().request;
 }
 
-// One instrument's quote: bid (the price you can SELL at), ask (the price you
-// BUY at) and the last traded price, each validated (see normalizeQuote).
-// The same single request as before already carries all three.
-async function fetchQuote(insref) {
+async function fetchLivePrice(insref) {
   const response = await apiContext.get(INSTRUMENT_API(insref));
   if (!response.ok()) {
     throw new Error(`HTTP ${response.status()} fetching instrument ${insref}`);
   }
-  return normalizeQuote(await response.json());
+  const json = await response.json();
+  // Prefer the last traded price; fall back to a bid/ask midpoint if the
+  // instrument hasn't traded recently (common for these — many rows in
+  // certificates_full show null lastprice too).
+  if (json.lastprice != null) return json.lastprice;
+  if (json.bidprice != null && json.askprice != null) return (json.bidprice + json.askprice) / 2;
+  if (json.askprice != null) return json.askprice;
+  if (json.bidprice != null) return json.bidprice;
+  return null;
 }
 
 // Every portfolio's positions, in as few queries as possible. PostgREST caps a
 // single response (1000 rows by default), and a silently truncated list would
 // produce a wrong NAV, so page through by id until a short page comes back.
 // For normal sizes that is exactly ONE query, i.e. one consistent snapshot.
-// ---- Which price values the portfolio ------------------------------------------
-// A position is valued at the BID (the default): the price you could actually sell it
-//   at. NAV and open profit/loss follow it, so a position bought at the ask starts out a
-//   little below zero, by the spread. Contracts that rarely trade still have a bid that
-//   follows the market, so their value no longer freezes between trades.
-// PRICE_BASIS=last switches back to the old way: the last traded price (falling back to
-//   the bid/ask midpoint). Only the exact word "last" does that.
-// Either way the bid, ask and last price are recorded on every tick.
-const PRICE_BASIS = (process.env.PRICE_BASIS || "bid").toLowerCase() === "last" ? "last" : "bid";
-
-function positive(v) {
-  const n = typeof v === "string" ? Number(v) : v;
-  return typeof n === "number" && Number.isFinite(n) && n > 0 ? n : null;
-}
-
-// Validate a raw instrument response. A price must be a positive number; a
-// bid above the ask is a broken quote, so BOTH sides of it are discarded
-// rather than trusting either one.
-function normalizeQuote(json) {
-  let bid = positive(json?.bidprice);
-  let ask = positive(json?.askprice);
-  const last = positive(json?.lastprice);
-  if (bid != null && ask != null && bid > ask) {
-    bid = null;
-    ask = null;
-  }
-  return { bid, ask, last };
-}
-
-// The price this tick values a position at, or null if there is no usable one
-// (then the position keeps its last known price and is never auto-closed).
-function valuationPrice(q, basis) {
-  if (!q) return null;
-  if (basis === "bid") return q.bid;
-  if (q.last != null) return q.last;
-  if (q.bid != null && q.ask != null) return (q.bid + q.ask) / 2;
-  return q.ask ?? q.bid ?? null;
-}
-
-// ---- Making sure a bid comes in every tick ----------------------------------------
-// Occasionally NGM answers with no bid for a contract, or the request fails, for a
-// moment. Ask once more, a split second later, before giving up on that contract for this
-// tick (then it keeps its last known price). Without this, a thinly traded contract
-// would be missing from one tick in a while for no good reason.
-const RETRY_DELAY_MS = Number(process.env.QUOTE_RETRY_DELAY_MS ?? 500);
-
-async function fetchQuoteReliably(insref) {
-  let quote = null;
-  let lastErr = null;
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    try {
-      quote = await fetchQuote(insref);
-      lastErr = null;
-      if (valuationPrice(quote, PRICE_BASIS) != null) return quote;
-    } catch (e) {
-      lastErr = e;
-    }
-    if (attempt === 1 && RETRY_DELAY_MS > 0) await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
-  }
-  if (!quote && lastErr) throw lastErr;
-  return quote;
-}
-
-// How long to wait before the next tick so that ticks start every `interval` ms, not
-// `interval` ms after the previous one FINISHED (which made them drift to 12-15 s).
-const MIN_GAP_MS = 500;
-function nextDelayMs(elapsedMs, interval) {
-  return Math.max(MIN_GAP_MS, interval - elapsedMs);
-}
-
-// ---- Writing quotes (columns from 0004_bid_ask.sql) -----------------------------
-// The new columns are added by SQL that is run by hand. If the database
-// doesn't have them yet, write without them (everything else carries on) and
-// look again every so often, so they switch on by themselves once the SQL ran.
-const QUOTE_RETRY_EVERY_TICKS = 30;
-let quoteColumnsOk = true;
-let ticksSinceQuoteCheck = 0;
-
-function markQuoteColumnsMissing() {
-  if (quoteColumnsOk) {
-    console.warn("Bid/ask are not being saved: the database has no bid/ask columns yet (run 0004_bid_ask.sql).");
-  }
-  quoteColumnsOk = false;
-  ticksSinceQuoteCheck = 0;
-}
-
-// A position's bid and ask are only saved as a consistent PAIR: a new bid next
-// to an old ask could cross it, which the database (rightly) refuses.
-function positionQuoteExtras(q, now) {
-  if (q && q.bid != null && q.ask != null) return { current_bid: q.bid, current_ask: q.ask, quote_updated_at: now };
-  return {};
-}
-function tickQuoteExtras(q) {
-  return q ? { bid: q.bid, ask: q.ask, last_price: q.last } : {};
-}
-
-async function updatePosition(id, base, extras, { onlyIfOpen = false } = {}) {
-  const attempt = (values) => {
-    let query = supabase.from("portfolio_positions").update(values).eq("id", id);
-    if (onlyIfOpen) query = query.eq("status", "open").select("id");
-    return query;
-  };
-  const withExtras = quoteColumnsOk && Object.keys(extras).length > 0;
-  let res = await attempt(withExtras ? { ...base, ...extras } : base);
-  if (withExtras && res.error && isMissingColumn(res.error)) {
-    markQuoteColumnsMissing();
-    res = await attempt(base);
-  }
-  return res;
-}
-
-async function insertTick(base, extras) {
-  const withExtras = quoteColumnsOk && Object.keys(extras).length > 0;
-  let res = await supabase.from("price_ticks").insert(withExtras ? { ...base, ...extras } : base);
-  if (withExtras && res.error && isMissingColumn(res.error)) {
-    markQuoteColumnsMissing();
-    res = await supabase.from("price_ticks").insert(base);
-  }
-  return res;
-}
-
-// One line per problem instrument at most every 5 minutes, not every tick.
-const lastWarned = new Map();
-function warnThrottled(key, message) {
-  const t = Date.now();
-  if (t - (lastWarned.get(key) ?? 0) < 5 * 60 * 1000) return;
-  lastWarned.set(key, t);
-  console.warn(message);
-}
-
 const POSITION_PAGE = 1000;
 
 // The automatic stop loss / target columns come from 0003_auto_close.sql, which
@@ -337,12 +212,7 @@ async function tick() {
   const closedPositions = allPositions.filter((p) => p.status === "closed");
 
   const now = new Date().toISOString();
-  const priceByIsin = new Map(); // instrument -> the price positions are valued at this tick
-  const quoteByIsin = new Map(); // instrument -> its validated bid / ask / last
-  if (!quoteColumnsOk && ++ticksSinceQuoteCheck >= QUOTE_RETRY_EVERY_TICKS) {
-    quoteColumnsOk = true; // try writing the bid/ask columns again
-    ticksSinceQuoteCheck = 0;
-  }
+  const priceByIsin = new Map();
 
   if (openPositions.length === 0) {
     // No open positions to fetch live prices for, but we still record a NAV
@@ -369,11 +239,8 @@ async function tick() {
           return;
         }
         try {
-          const quote = await fetchQuoteReliably(insref);
-          quoteByIsin.set(isin, quote);
-          const price = valuationPrice(quote, PRICE_BASIS);
+          const price = await fetchLivePrice(insref);
           if (price != null) priceByIsin.set(isin, price);
-          else warnThrottled(`noprice:${isin}`, `No usable ${PRICE_BASIS === "bid" ? "bid" : "price"} for ${isin} (insref ${insref}) — keeping its last known price.`);
         } catch (e) {
           console.warn(`Price fetch failed for ${isin} (insref ${insref}): ${e.message}`);
         }
@@ -401,28 +268,24 @@ async function tick() {
     const freshPrice = priceByIsin.get(pos.isin);
     if (freshPrice == null) continue; // nothing new to write for this position this tick
 
-    const quote = quoteByIsin.get(pos.isin);
-    const posExtras = positionQuoteExtras(quote, now);
-    const tickExtras = tickQuoteExtras(quote);
-
     const due = autoDue.get(pos.id);
     if (due) {
       // Close it, but only if it is still open: if you closed it by hand a
       // moment ago, leave that close alone. Its profit is counted once above,
       // at this same price, so the NAV written below is the same either way.
-      const { data: closed, error: closeErr } = await updatePosition(
-        pos.id,
-        {
+      const { data: closed, error: closeErr } = await supabase
+        .from("portfolio_positions")
+        .update({
           status: "closed",
           exit_price: freshPrice,
           exit_time: now,
           current_price: freshPrice,
           current_updated_at: now,
           close_reason: due.reason,
-        },
-        posExtras,
-        { onlyIfOpen: true }
-      );
+        })
+        .eq("id", pos.id)
+        .eq("status", "open")
+        .select("id");
       if (closeErr) {
         console.warn(`Auto-close of ${pos.name ?? pos.id} failed: ${closeErr.message}`);
       } else if (closed && closed.length > 0) {
@@ -433,12 +296,16 @@ async function tick() {
       } else {
         breachCount.delete(pos.id); // already closed by someone else
       }
-      await insertTick({ position_id: pos.id, price: freshPrice, ts: now }, tickExtras);
+      await supabase.from("price_ticks").insert({ position_id: pos.id, price: freshPrice, ts: now });
       continue;
     }
 
-    await updatePosition(pos.id, { current_price: freshPrice, current_updated_at: now }, posExtras);
-    await insertTick({ position_id: pos.id, price: freshPrice, ts: now }, tickExtras);
+    await supabase
+      .from("portfolio_positions")
+      .update({ current_price: freshPrice, current_updated_at: now })
+      .eq("id", pos.id);
+
+    await supabase.from("price_ticks").insert({ position_id: pos.id, price: freshPrice, ts: now });
   }
 
   for (const pos of closedPositions) {
@@ -465,7 +332,7 @@ async function tick() {
 
   const summary = navRows.map((r) => `#${r.portfolio_id}=${r.nav.toFixed(2)}`).join(" ");
   console.log(
-    `Tick ${now} [${PRICE_BASIS}]: ${priceByIsin.size}/${new Set(openPositions.map((p) => p.isin)).size} prices updated (${openPositions.length} open positions), ${navRows.length} portfolios NAV: ${summary || "none"}`
+    `Tick ${now}: ${priceByIsin.size}/${new Set(openPositions.map((p) => p.isin)).size} prices updated (${openPositions.length} open positions), ${navRows.length} portfolios NAV: ${summary || "none"}`
   );
 }
 
@@ -605,6 +472,124 @@ async function tickerTick() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Produkt i motsatt riktning, matchad på Vontobels hävstång.
+//
+// NGM:s produktlista saknar hävstång för mini futures och turbos, så den
+// hämtas från Vontobels produktsida ("Hävstång" under Nyckeltal) — samma siffra
+// som visas på markets.vontobel.com. För varje ny position utan vald produkt:
+//   1. Kandidater: samma underliggande, samma produkttyp, motsatt riktning
+//      (MFS<->MFL, BEAR<->BULL, TLNG<->TSRT/TSHO) ur certificates_full.
+//   2. Förurval på kurs (de 15 närmast positionens certifikat), så att bara
+//      ett fåtal produktsidor behöver hämtas.
+//   3. Hävstång för positionens certifikat och kandidaterna hämtas från
+//      Vontobel; den med närmast hävstång väljs.
+// Går det inte att läsa hävstång används databasens reservregel
+// (sitg_find_opposite). Körs högst var femte minut.
+// ---------------------------------------------------------------------------
+const OPP_EVERY_MS = 5 * 60 * 1000;
+const OPP_PREFILTER = 15;
+const leverageCache = new Map(); // isin -> { value, at }
+let lastOppRun = 0;
+
+const OPP_PREFIXES = {
+  MFS: ["MFL"], MFL: ["MFS"], BEAR: ["BULL"], BULL: ["BEAR"],
+  TLNG: ["TSRT", "TSHO"], TSRT: ["TLNG"], TSHO: ["TLNG"],
+};
+const prefixOf = (name) => String(name || "").trim().split(/\s+/)[0].toUpperCase();
+
+function vontobelProductUrl(name, isin) {
+  const pre = prefixOf(name);
+  const type = pre === "BULL" || pre === "BEAR" ? "bull-bear-certifikat"
+    : pre === "MFL" || pre === "MFS" ? "mini-futures"
+    : "knock-out-warrants-open-end";
+  return `https://markets.vontobel.com/sv-se/produkter/leverage/${type}/${encodeURIComponent(isin)}`;
+}
+
+async function vontobelLeverage(name, isin) {
+  const hit = leverageCache.get(isin);
+  if (hit && Date.now() - hit.at < 15 * 60 * 1000) return hit.value;
+  let value = null;
+  try {
+    const res = await apiContext.get(vontobelProductUrl(name, isin), { timeout: 20000 });
+    if (res.ok()) {
+      const text = (await res.text()).replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ");
+      // "Hävstång 2,49" (tabellen) eller "Hävstång: 2,49" (rubriken)
+      const m = text.match(/Hävstång:?\s+(\d{1,3}(?:[ .]\d{3})*(?:,\d+)?|\d+(?:[.,]\d+)?)/);
+      if (m) value = Number(m[1].replace(/[ .](?=\d{3}\b)/g, "").replace(",", "."));
+      if (!isFinite(value) || value <= 0) value = null;
+    }
+  } catch {}
+  leverageCache.set(isin, { value, at: Date.now() });
+  return value;
+}
+
+async function fillOppositeProducts() {
+  if (Date.now() - lastOppRun < OPP_EVERY_MS) return;
+  lastOppRun = Date.now();
+  const { data: positions, error } = await supabase
+    .from("portfolio_positions")
+    .select("id, isin, name, underlying, leverage")
+    .eq("status", "open")
+    .is("opposite_isin", null)
+    .is("opposite_name", null)
+    .limit(5);
+  if (error) { console.warn("Motsatt riktning:", error.message); return; }
+  if (!positions?.length) return;
+
+  await ensureBrowser();
+  for (const pos of positions) {
+    try {
+      const opp = OPP_PREFIXES[prefixOf(pos.name)];
+      if (!opp) {
+        // Ingen motsvarighet (t.ex. tracker): markera så att den inte prövas igen.
+        await supabase.from("portfolio_positions").update({ opposite_isin: "", opposite_name: "" }).eq("id", pos.id);
+        continue;
+      }
+      const { data: self } = await supabase
+        .from("certificates_full").select("underlying, last_price, buy_price, sell_price").eq("isin", pos.isin).maybeSingle();
+      const und = self?.underlying ?? pos.underlying;
+      const px = (r) => Number(r?.last_price ?? (r?.buy_price != null && r?.sell_price != null ? (r.buy_price + r.sell_price) / 2 : r?.sell_price ?? r?.buy_price)) || null;
+      const selfPx = px(self);
+
+      let q = supabase.from("certificates_full").select("isin, name, underlying, last_price, buy_price, sell_price, turnover").neq("isin", pos.isin);
+      q = und ? q.ilike("underlying", und) : q.ilike("name", `% ${String(pos.name).split(/\s+/)[1] || ""} %`);
+      const { data: all } = await q.limit(1000);
+      const cands = (all || []).filter((c) => opp.includes(prefixOf(c.name)));
+      if (!cands.length) continue;
+
+      // Förurval på kurs, sedan riktig hävstång från Vontobel.
+      const ranked = cands
+        .map((c) => ({ c, d: selfPx && px(c) ? Math.abs(Math.log(px(c) / selfPx)) : Infinity }))
+        .sort((a, b) => a.d - b.d || (b.c.turnover ?? 0) - (a.c.turnover ?? 0))
+        .slice(0, OPP_PREFILTER)
+        .map((x) => x.c);
+      const selfLev = (await vontobelLeverage(pos.name, pos.isin)) ?? (pos.leverage ? Number(pos.leverage) : null);
+      let best = null;
+      if (selfLev) {
+        for (const c of ranked) {
+          const lev = await vontobelLeverage(c.name, c.isin);
+          if (lev == null) continue;
+          const d = Math.abs(lev - selfLev);
+          if (!best || d < best.d) best = { c, d, lev };
+        }
+      }
+      let chosen = best?.c;
+      if (!chosen) {
+        // Reserv: databasens regel (närmast kurs / hävstång i produktlistan).
+        const { data: fb } = await supabase.rpc("sitg_find_opposite", { p_name: pos.name, p_underlying: pos.underlying, p_leverage: pos.leverage, p_isin: pos.isin });
+        chosen = fb?.[0];
+      }
+      if (chosen) {
+        await supabase.from("portfolio_positions").update({ opposite_isin: chosen.isin, opposite_name: chosen.name }).eq("id", pos.id);
+        console.log(`Motsatt riktning: ${pos.name} (hävstång ${selfLev ?? "?"}) -> ${chosen.name}${best ? ` (hävstång ${best.lev})` : " (reservregel)"}`);
+      }
+    } catch (err) {
+      console.warn(`Motsatt riktning för ${pos.name}:`, err?.message ?? err);
+    }
+  }
+}
+
 let marketWasOpen = null;
 
 async function loop() {
@@ -625,7 +610,6 @@ async function loop() {
     console.log("Trading hours — starting price refresh.");
     marketWasOpen = true;
   }
-  const startedAt = Date.now();
   try {
     await tick();
     // Separate from the NAV tick: a ticker problem must never stop the
@@ -635,6 +619,11 @@ async function loop() {
     } catch (err) {
       console.warn("Ticker update failed:", err?.message ?? err);
     }
+    try {
+      await fillOppositeProducts();
+    } catch (err) {
+      console.warn("Opposite products failed:", err?.message ?? err);
+    }
   } catch (err) {
     console.error("Tick failed:", err);
     try {
@@ -643,14 +632,9 @@ async function loop() {
     browser = null;
     apiContext = null;
   } finally {
-    setTimeout(loop, nextDelayMs(Date.now() - startedAt, REFRESH_INTERVAL_MS));
+    setTimeout(loop, REFRESH_INTERVAL_MS);
   }
 }
 
 console.log(`Starting quote worker, refreshing every ${REFRESH_INTERVAL_MS}ms during trading hours (${ALWAYS_ON ? "ALWAYS_ON" : HOURS_LABEL}).`);
-console.log(
-  PRICE_BASIS === "bid"
-    ? "Price basis: BID — NAV and open P/L are valued at the price positions could be sold at."
-    : "Price basis: LAST (PRICE_BASIS=last) — positions are valued at the last traded price. Remove PRICE_BASIS to value at the bid."
-);
 loop();
