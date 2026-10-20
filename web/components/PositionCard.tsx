@@ -1,6 +1,7 @@
 "use client";
 
 import TradeNote from "./TradeNote";
+import { vontobelUrl } from "@/lib/vontobelUrl";
 
 type Position = {
   id: string;
@@ -32,6 +33,9 @@ type Position = {
   auto_stop?: boolean | null;
   auto_target?: boolean | null;
   close_reason?: string | null;
+  // Produkt i motsatt riktning (väljs automatiskt).
+  opposite_isin?: string | null;
+  opposite_name?: string | null;
 };
 
 const CLOSE_REASON_TEXT: Record<string, string> = {
@@ -261,7 +265,15 @@ export default function PositionCard({ p, sold }: { p: Position; sold?: { quanti
     <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
       <div className="mb-3 flex items-center justify-between">
         <div>
-          <div className="font-semibold text-neutral-100">{p.name}</div>
+          <a
+            href={vontobelUrl(p.name, p.isin)}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={`${p.name} – öppna hos Vontobel`}
+            className="font-semibold text-neutral-100 underline decoration-amber-400/50 underline-offset-2 hover:decoration-amber-400"
+          >
+            {p.name} <span className="text-amber-400">↗</span>
+          </a>
           <div className="text-xs text-neutral-500">
             {p.underlying} · {dirLabel(p.direction)} {leverageOrType}
             {p.quantity ? ` · ${p.quantity} kontrakt` : ""}
@@ -340,7 +352,12 @@ export default function PositionCard({ p, sold }: { p: Position; sold?: { quanti
         </div>
       )}
 
-      <TradeNote note={p.note} podcastEpisode={p.podcast_episode} />
+      <TradeNote
+        note={p.note}
+        podcastEpisode={p.podcast_episode}
+        oppositeIsin={p.opposite_isin}
+        oppositeName={p.opposite_name}
+      />
     </div>
   );
 }
