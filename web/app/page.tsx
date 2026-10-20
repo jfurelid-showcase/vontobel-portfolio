@@ -714,6 +714,37 @@ function PortfolioAdmin() {
     setQuery(c.name);
   }
 
+  // Produkt i motsatt riktning: föreslås automatiskt (på Vontobels hävstång) och
+  // skrivs in sist i kommentaren, så att den syns innan positionen läggs till.
+  const [opposite, setOpposite] = useState<{ loading: boolean; name: string | null }>({ loading: false, name: null });
+  useEffect(() => {
+    if (!selected) { setOpposite({ loading: false, name: null }); return; }
+    let cancelled = false;
+    setOpposite({ loading: true, name: null });
+    fetch(`/api/certificates/opposite?isin=${encodeURIComponent(selected.isin)}`)
+      .then((r) => r.json())
+      .then((j) => {
+        if (cancelled) return;
+        setOpposite({ loading: false, name: j?.name ?? null });
+        if (!j?.name) return;
+        const lev = (v: number | null | undefined) =>
+          v == null ? null : Number(v).toLocaleString("sv-SE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const levTxt = lev(j.leverage) && lev(j.ownLeverage)
+          ? ` (hävstång ${lev(j.leverage)} · positionens hävstång ${lev(j.ownLeverage)})` : "";
+        const line = `Produkt i motsatt riktning: ${j.name}${levTxt}`;
+        setForm((f) => {
+          const note = f.note || "";
+          // Byt ut en tidigare föreslagen rad (t.ex. vid byte av kontrakt) eller lägg till.
+          const next = /motsatt riktning:[^\n\r]*/i.test(note)
+            ? note.replace(/(produkt i )?motsatt riktning:\s*[^\n\r]*/i, line)
+            : note.trim() ? `${note.trimEnd()}\n\n${line}` : line;
+          return { ...f, note: next };
+        });
+      })
+      .catch(() => { if (!cancelled) setOpposite({ loading: false, name: null }); });
+    return () => { cancelled = true; };
+  }, [selected?.isin]);
+
   // While a contract is selected, keep its live ask/bid fresh.
   useEffect(() => {
     if (!selected) return;
@@ -1097,6 +1128,7 @@ function PortfolioAdmin() {
             <div className="col-span-2 rounded-lg bg-neutral-800/60 px-3 py-2 text-sm text-neutral-300">
               Selected: <span className="font-medium text-neutral-100">{selected.name}</span> ({selected.isin})
               <LeverageInfo isin={selected.isin} />
+              {opposite.loading && <span className="ml-2 text-xs text-neutral-500">Söker produkt i motsatt riktning…</span>}
             </div>
             <Field label="Ingångskurs (köpkurs, ask)">
               <input
