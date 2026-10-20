@@ -17,6 +17,7 @@ import PositionsExportButton from "@/components/PositionsExport";
 import AdminTab from "@/components/AdminTab";
 import GuestDisclaimer from "@/components/GuestDisclaimer";
 import LeverageInfo from "@/components/LeverageInfo";
+import { vontobelUrl } from "@/lib/vontobelUrl";
 import { PortfolioProvider, usePortfolio } from "@/lib/portfolioClient";
 import { useResync } from "@/lib/useResync";
 import { useMarketOpen } from "@/lib/useMarketOpen";
@@ -716,7 +717,7 @@ function PortfolioAdmin() {
 
   // Produkt i motsatt riktning: föreslås automatiskt (på Vontobels hävstång) och
   // skrivs in sist i kommentaren, så att den syns innan positionen läggs till.
-  const [opposite, setOpposite] = useState<{ loading: boolean; name: string | null }>({ loading: false, name: null });
+  const [opposite, setOpposite] = useState<{ loading: boolean; name: string | null; isin?: string | null }>({ loading: false, name: null });
   useEffect(() => {
     if (!selected) { setOpposite({ loading: false, name: null }); return; }
     let cancelled = false;
@@ -725,7 +726,7 @@ function PortfolioAdmin() {
       .then((r) => r.json())
       .then((j) => {
         if (cancelled) return;
-        setOpposite({ loading: false, name: j?.name ?? null });
+        setOpposite({ loading: false, name: j?.name ?? null, isin: j?.isin ?? null });
         if (!j?.name) return;
         const lev = (v: number | null | undefined) =>
           v == null ? null : Number(v).toLocaleString("sv-SE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -1129,6 +1130,19 @@ function PortfolioAdmin() {
               Selected: <span className="font-medium text-neutral-100">{selected.name}</span> ({selected.isin})
               <LeverageInfo isin={selected.isin} />
               {opposite.loading && <span className="ml-2 text-xs text-neutral-500">Söker produkt i motsatt riktning…</span>}
+              {!opposite.loading && opposite.name && (
+                <div className="mt-1 text-xs text-neutral-400">
+                  Produkt i motsatt riktning:{" "}
+                  <a
+                    href={vontobelUrl(opposite.name, opposite.isin)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-medium text-amber-300 underline decoration-amber-300/50 underline-offset-2 hover:decoration-amber-300"
+                  >
+                    {opposite.name} ↗
+                  </a>
+                </div>
+              )}
             </div>
             <Field label="Ingångskurs (köpkurs, ask)">
               <input
