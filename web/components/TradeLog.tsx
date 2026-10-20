@@ -26,7 +26,20 @@ type Position = {
   parent_position_id?: string | null; // set on the closed row a part-sale creates
   note?: string | null; // gästens kommentar till affären
   podcast_episode?: string | null;
+  opposite_isin?: string | null; // produkt i motsatt riktning (väljs automatiskt)
+  opposite_name?: string | null;
 };
+
+// Länk till produktsidan hos Vontobel (svenska sidan), utifrån namnets prefix.
+function vontobelUrl(name: string, isin?: string | null) {
+  const pre = name.trim().split(/\s+/)[0].toUpperCase();
+  const type = pre === "BULL" || pre === "BEAR" ? "bull-bear-certifikat"
+    : pre === "MFL" || pre === "MFS" ? "mini-futures"
+    : pre === "TLNG" || pre === "TSRT" || pre === "TSHO" ? "knock-out-warrants-open-end" : "";
+  return type && isin
+    ? `https://markets.vontobel.com/sv-se/produkter/leverage/${type}/${encodeURIComponent(isin)}`
+    : "https://markets.vontobel.com/sv-se/produkter";
+}
 
 // One entry in the journal of a position that has been added to or partly sold
 // (position_fills): the opening, each "Köp mer" and each "Sälj del".
@@ -271,8 +284,12 @@ function EventRow({ ev }: { ev: TradeEvent }) {
   const { p, kind, fill } = ev;
   // Kommentaren hör till när positionen tas, så den visas (hopfälld) på öppningsraden.
   const isOpening = kind === "open" && (!fill || fill.kind === "open");
-  const comment = isOpening ? (p.note ?? "").trim() : "";
-  const hasComment = !!comment || (isOpening && !!p.podcast_episode);
+  const opposite = isOpening && p.opposite_name ? p.opposite_name.trim() : "";
+  // Står produkten redan i kommentarens text tas den raden bort där; den visas
+  // i stället som en länk under kommentaren (som på skininthegame.se).
+  const rawNote = isOpening ? (p.note ?? "").trim() : "";
+  const comment = opposite ? rawNote.replace(/\s*(produkt i )?motsatt riktning:\s*[^\n\r]+\s*$/i, "").trim() : rawNote;
+  const hasComment = !!comment || !!opposite || (isOpening && !!p.podcast_episode);
   const [showComment, setShowComment] = useState(false);
   const isLong = p.direction?.toLowerCase() === "long";
   const isShort = p.direction?.toLowerCase() === "short";
@@ -370,6 +387,19 @@ function EventRow({ ev }: { ev: TradeEvent }) {
       <div className="mx-4 mb-3 whitespace-pre-line rounded-lg border-l-2 border-amber-400 bg-amber-400/10 px-3 py-2 text-sm leading-relaxed text-neutral-200">
         {comment}
         {p.podcast_episode && <div className="mt-1 text-xs text-amber-300">🎙 {p.podcast_episode}</div>}
+        {opposite && (
+          <div className={`${comment ? "mt-2" : ""} text-xs text-neutral-400`}>
+            Produkt i motsatt riktning:{" "}
+            <a
+              href={vontobelUrl(opposite, p.opposite_isin)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-medium text-amber-300 underline underline-offset-2 hover:text-amber-200"
+            >
+              {opposite} ↗
+            </a>
+          </div>
+        )}
       </div>
     )}
     </div>
