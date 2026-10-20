@@ -294,7 +294,10 @@ function EventRow({ ev }: { ev: TradeEvent }) {
   // Står produkten redan i kommentarens text tas den raden bort där; den visas
   // i stället som en länk under kommentaren (som på skininthegame.se).
   const rawNote = isOpening ? (p.note ?? "").trim() : "";
-  const comment = opposite ? rawNote.replace(/\s*(produkt i )?motsatt riktning:\s*[^\n\r]+\s*$/i, "").trim() : rawNote;
+  // Raden kan stå var som helst i kommentaren (även först), så alla sådana rader tas bort.
+  const comment = opposite
+    ? rawNote.replace(/^[ \t]*(produkt i )?motsatt riktning:[^\n\r]*(\r?\n)?/gim, "").replace(/\n{3,}/g, "\n\n").trim()
+    : rawNote;
   const hasComment = !!comment || !!opposite || (isOpening && !!p.podcast_episode);
   const [showComment, setShowComment] = useState(false);
   const isLong = p.direction?.toLowerCase() === "long";
