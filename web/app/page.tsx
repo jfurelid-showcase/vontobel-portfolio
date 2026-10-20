@@ -16,6 +16,7 @@ import TabMenu from "@/components/TabMenu";
 import PositionsExportButton from "@/components/PositionsExport";
 import AdminTab from "@/components/AdminTab";
 import GuestDisclaimer from "@/components/GuestDisclaimer";
+import LeverageInfo from "@/components/LeverageInfo";
 import { PortfolioProvider, usePortfolio } from "@/lib/portfolioClient";
 import { useResync } from "@/lib/useResync";
 import { useMarketOpen } from "@/lib/useMarketOpen";
@@ -1095,6 +1096,7 @@ function PortfolioAdmin() {
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2 rounded-lg bg-neutral-800/60 px-3 py-2 text-sm text-neutral-300">
               Selected: <span className="font-medium text-neutral-100">{selected.name}</span> ({selected.isin})
+              <LeverageInfo isin={selected.isin} />
             </div>
             <Field label="Ingångskurs (köpkurs, ask)">
               <input
