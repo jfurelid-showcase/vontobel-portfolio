@@ -24,6 +24,8 @@ type Position = {
   close_reason?: string | null; // "stop_loss" | "take_profit" when closed automatically, "trim" for a part-sale
   adds?: number | null;
   parent_position_id?: string | null; // set on the closed row a part-sale creates
+  note?: string | null; // gästens kommentar till affären
+  podcast_episode?: string | null;
 };
 
 // One entry in the journal of a position that has been added to or partly sold
@@ -267,6 +269,11 @@ export default function TradeLog() {
 
 function EventRow({ ev }: { ev: TradeEvent }) {
   const { p, kind, fill } = ev;
+  // Kommentaren hör till när positionen tas, så den visas (hopfälld) på öppningsraden.
+  const isOpening = kind === "open" && (!fill || fill.kind === "open");
+  const comment = isOpening ? (p.note ?? "").trim() : "";
+  const hasComment = !!comment || (isOpening && !!p.podcast_episode);
+  const [showComment, setShowComment] = useState(false);
   const isLong = p.direction?.toLowerCase() === "long";
   const isShort = p.direction?.toLowerCase() === "short";
   // A journal event carries its own price and quantity; otherwise it is the position's own.
@@ -323,7 +330,8 @@ function EventRow({ ev }: { ev: TradeEvent }) {
   }
 
   return (
-    <div className="flex items-center gap-3 border-t border-neutral-800 px-4 py-3">
+    <div className="border-t border-neutral-800">
+    <div className="flex items-center gap-3 px-4 py-3">
       <div className="w-11 shrink-0 text-xs tabular-nums text-neutral-500">{timeOf(ev.ts)}</div>
       <span
         className={`w-[4.9rem] shrink-0 whitespace-nowrap rounded-md px-2 py-0.5 text-center text-[11px] font-medium tracking-wide ${
@@ -344,8 +352,26 @@ function EventRow({ ev }: { ev: TradeEvent }) {
           {kind === "close" && !fill && p.close_reason === "stop_loss" && <span className="text-amber-300"> · automatisk stop loss</span>}
           {kind === "close" && !fill && p.close_reason === "take_profit" && <span className="text-amber-300"> · automatiskt mål</span>}
         </div>
+        {hasComment && (
+          <button
+            type="button"
+            onClick={() => setShowComment((v) => !v)}
+            aria-expanded={showComment}
+            className="mt-1 inline-flex items-center gap-1 rounded-md bg-amber-400/10 px-2 py-0.5 text-[11px] font-medium text-amber-300 hover:bg-amber-400/20"
+          >
+            <span aria-hidden="true" className={`inline-block transition-transform ${showComment ? "rotate-90" : ""}`}>▸</span>
+            {showComment ? "Dölj kommentar" : "Visa kommentar"}
+          </button>
+        )}
       </div>
       <div className="shrink-0 text-right">{plCell}</div>
+    </div>
+    {hasComment && showComment && (
+      <div className="mx-4 mb-3 whitespace-pre-line rounded-lg border-l-2 border-amber-400 bg-amber-400/10 px-3 py-2 text-sm leading-relaxed text-neutral-200">
+        {comment}
+        {p.podcast_episode && <div className="mt-1 text-xs text-amber-300">🎙 {p.podcast_episode}</div>}
+      </div>
+    )}
     </div>
   );
 }
