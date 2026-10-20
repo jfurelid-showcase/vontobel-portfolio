@@ -411,7 +411,6 @@ function EventRow({ ev }: { ev: TradeEvent }) {
     {hasComment && showComment && (
       <div className="mx-4 mb-3 whitespace-pre-line rounded-lg border-l-2 border-amber-400 bg-amber-400/10 px-3 py-2 text-sm leading-relaxed text-neutral-200">
         {comment}
-        {p.podcast_episode && <div className="mt-1 text-xs text-amber-300">🎙 {p.podcast_episode}</div>}
         {opposite && (
           <div className={`${comment ? "mt-2" : ""} text-xs text-neutral-400`}>
             Produkt i motsatt riktning:{" "}
@@ -431,6 +430,10 @@ function EventRow({ ev }: { ev: TradeEvent }) {
               </div>
             )}
           </div>
+        )}
+        {/* Avsnittet sist i kommentaren. */}
+        {isOpening && p.podcast_episode && (
+          <div className={`${comment || opposite ? "mt-2" : ""} text-xs text-amber-300`}>🎙 {p.podcast_episode}</div>
         )}
       </div>
     )}
