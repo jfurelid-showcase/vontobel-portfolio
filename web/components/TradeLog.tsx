@@ -286,6 +286,22 @@ export default function TradeLog() {
   );
 }
 
+// Tar bort raden "Produkt i motsatt riktning: …" och rader med bara den
+// produktens namn (med eller utan hävstång inom parentes) ur kommentaren.
+function stripOpposite(note: string, name: string): string {
+  const target = name.trim().toUpperCase();
+  return note
+    .split(/\r?\n/)
+    .filter((line) => {
+      const t = line.trim();
+      if (/^(produkt i )?motsatt riktning:/i.test(t)) return false;
+      return t.replace(/\s*\(.*\)\s*$/, "").toUpperCase() !== target;
+    })
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function EventRow({ ev }: { ev: TradeEvent }) {
   const { p, kind, fill } = ev;
   // Kommentaren hör till när positionen tas, så den visas (hopfälld) på öppningsraden.
@@ -295,9 +311,9 @@ function EventRow({ ev }: { ev: TradeEvent }) {
   // i stället som en länk under kommentaren (som på skininthegame.se).
   const rawNote = isOpening ? (p.note ?? "").trim() : "";
   // Raden kan stå var som helst i kommentaren (även först), så alla sådana rader tas bort.
-  const comment = opposite
-    ? rawNote.replace(/^[ \t]*(produkt i )?motsatt riktning:[^\n\r]*(\r?\n)?/gim, "").replace(/\n{3,}/g, "\n\n").trim()
-    : rawNote;
+  // Tas också bort: en rad med bara produktnamnet (t.ex. "MFL APPLE VT307"), eftersom
+  // den redan visas som länk under kommentaren.
+  const comment = opposite ? stripOpposite(rawNote, opposite) : rawNote;
   const hasComment = !!comment || !!opposite || (isOpening && !!p.podcast_episode);
   const [showComment, setShowComment] = useState(false);
   const isLong = p.direction?.toLowerCase() === "long";
