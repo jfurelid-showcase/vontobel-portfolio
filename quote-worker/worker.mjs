@@ -662,10 +662,11 @@ async function fillOppositeProducts() {
   lastOppRun = Date.now();
   const { data: positions, error } = await supabase
     .from("portfolio_positions")
-    .select("id, isin, name, underlying, leverage")
+    .select("id, isin, name, underlying, leverage, note, opposite_source")
     .eq("status", "open")
-    .is("opposite_isin", null)
-    .is("opposite_name", null)
+    // Nya positioner har ett preliminärt val från databasen (0010); de förfinas
+    // här på Vontobels hävstång. Klara positioner har opposite_source 'leverage'.
+    .or("opposite_source.is.null,opposite_source.eq.preliminary")
     .limit(5);
   if (error) { console.warn("Motsatt riktning:", error.message); return; }
   if (!positions?.length) return;
@@ -676,7 +677,7 @@ async function fillOppositeProducts() {
       const opp = OPP_PREFIXES[prefixOf(pos.name)];
       if (!opp) {
         // Ingen motsvarighet (t.ex. tracker): markera så att den inte prövas igen.
-        await supabase.from("portfolio_positions").update({ opposite_isin: "", opposite_name: "" }).eq("id", pos.id);
+        await supabase.from("portfolio_positions").update({ opposite_source: "none" }).eq("id", pos.id);
         continue;
       }
       const { data: self } = await supabase
@@ -689,7 +690,10 @@ async function fillOppositeProducts() {
       q = und ? q.ilike("underlying", und) : q.ilike("name", `% ${String(pos.name).split(/\s+/)[1] || ""} %`);
       const { data: all } = await q.limit(1000);
       const cands = (all || []).filter((c) => opp.includes(prefixOf(c.name)));
-      if (!cands.length) continue;
+      if (!cands.length) {
+        await supabase.from("portfolio_positions").update({ opposite_source: "none" }).eq("id", pos.id);
+        continue;
+      }
 
       // Förurval på kurs, sedan riktig hävstång från Vontobel.
       const ranked = cands
@@ -714,7 +718,24 @@ async function fillOppositeProducts() {
         chosen = fb?.[0];
       }
       if (chosen) {
-        await supabase.from("portfolio_positions").update({ opposite_isin: chosen.isin, opposite_name: chosen.name }).eq("id", pos.id);
+        // Produkten skrivs också in i kommentaren, så att den syns i portföljverktyget
+        // (admin och listor). Webbplatsen visar den ändå bara en gång.
+        const fmtLev = (v) => Number(v).toLocaleString("sv-SE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const levTxt = best && selfLev
+          ? ` (hävstång ${fmtLev(best.lev)} · positionens hävstång ${fmtLev(selfLev)})`
+          : "";
+        const line = `Produkt i motsatt riktning: ${chosen.name}${levTxt}`;
+        const old = pos.note || "";
+        // Byt ut en befintlig rad (t.ex. det preliminära valet) eller lägg till en ny.
+        const note = /motsatt riktning:[^\n\r]*/i.test(old)
+          ? old.replace(/(produkt i )?motsatt riktning:\s*[^\n\r]*/i, line)
+          : (old.trim() ? `${old.trimEnd()}\n\n${line}` : line);
+        await supabase.from("portfolio_positions").update({
+          opposite_isin: chosen.isin, opposite_name: chosen.name, note,
+          opposite_source: best ? "leverage" : "fallback",
+          opposite_leverage: best ? best.lev : null,
+          own_leverage: selfLev ?? null,
+        }).eq("id", pos.id);
         console.log(`Motsatt riktning: ${pos.name} (hävstång ${selfLev ?? "?"}) -> ${chosen.name}${best ? ` (hävstång ${best.lev})` : " (reservregel)"}`);
       }
     } catch (err) {

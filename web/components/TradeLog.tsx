@@ -28,7 +28,13 @@ type Position = {
   podcast_episode?: string | null;
   opposite_isin?: string | null; // produkt i motsatt riktning (väljs automatiskt)
   opposite_name?: string | null;
+  opposite_leverage?: number | null; // hävstång enligt Vontobel
+  own_leverage?: number | null;
 };
+
+const levFmt = (v: number | null | undefined) =>
+  v == null || !isFinite(Number(v)) ? null
+    : Number(v).toLocaleString("sv-SE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 // Länk till produktsidan hos Vontobel (svenska sidan), utifrån namnets prefix.
 function vontobelUrl(name: string, isin?: string | null) {
@@ -398,6 +404,13 @@ function EventRow({ ev }: { ev: TradeEvent }) {
             >
               {opposite} ↗
             </a>
+            {(levFmt(p.opposite_leverage) || levFmt(p.own_leverage)) && (
+              <div className="mt-0.5 text-[11px] text-neutral-500">
+                {levFmt(p.opposite_leverage) && `hävstång ${levFmt(p.opposite_leverage)}`}
+                {levFmt(p.opposite_leverage) && levFmt(p.own_leverage) && " · "}
+                {levFmt(p.own_leverage) && `positionens hävstång ${levFmt(p.own_leverage)}`}
+              </div>
+            )}
           </div>
         )}
       </div>
