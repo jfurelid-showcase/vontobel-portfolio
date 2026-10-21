@@ -635,10 +635,9 @@ async function tickerTick() {
 // (sitg_find_opposite). Körs högst var femte minut.
 // ---------------------------------------------------------------------------
 const OPP_EVERY_MS = 5 * 60 * 1000;
-const OPP_PREFILTER = 40; // (används inte längre; se steg 1 och 2 nedan)
+const OPP_PREFILTER = 40;
 const leverageCache = new Map(); // isin -> { value, at }
 let lastOppRun = 0;
-let oppRunning = false;
 
 const OPP_PREFIXES = {
   MFS: ["MFL"], MFL: ["MFS"], BEAR: ["BULL"], BULL: ["BEAR"],
@@ -710,16 +709,17 @@ async function fillOppositeProducts() {
         continue;
       }
 
-      // Hävstången kontrolleras för ALLA kandidater: kurserna i produktlistan är
-      // ofta tomma eller gamla och duger inte som förurval. Mest omsatta först.
-      const sorted = [...cands].sort((a, b) => (b.turnover ?? 0) - (a.turnover ?? 0)).slice(0, 400);
-      const levOf = new Map();
+      // Förurval på kurs, sedan riktig hävstång från Vontobel.
+      const ranked = cands
+        .map((c) => ({ c, d: selfPx && px(c) ? Math.abs(Math.log(px(c) / selfPx)) : Infinity }))
+        .sort((a, b) => a.d - b.d || (b.c.turnover ?? 0) - (a.c.turnover ?? 0))
+        .slice(0, OPP_PREFILTER)
+        .map((x) => x.c);
       const selfLev = (await vontobelLeverage(pos.name, pos.isin)) ?? (pos.leverage ? Number(pos.leverage) : null);
-      if (selfLev) for (const c of sorted) levOf.set(c.isin, await vontobelLeverage(c.name, c.isin));
       let best = null;
       if (selfLev) {
-        for (const c of sorted) {
-          const lev = levOf.get(c.isin);
+        for (const c of ranked) {
+          const lev = await vontobelLeverage(c.name, c.isin);
           if (lev == null) continue;
           const d = Math.abs(lev - selfLev);
           if (!best || d < best.d) best = { c, d, lev };
@@ -788,13 +788,10 @@ async function loop() {
     } catch (err) {
       console.warn("Ticker update failed:", err?.message ?? err);
     }
-    // Körs i bakgrunden (kan ta en minut när många produkter kontrolleras), så att
-    // kursuppdateringarna inte väntar på den.
-    if (!oppRunning) {
-      oppRunning = true;
-      fillOppositeProducts()
-        .catch((err) => console.warn("Opposite products failed:", err?.message ?? err))
-        .finally(() => { oppRunning = false; });
+    try {
+      await fillOppositeProducts();
+    } catch (err) {
+      console.warn("Opposite products failed:", err?.message ?? err);
     }
   } catch (err) {
     console.error("Tick failed:", err);
