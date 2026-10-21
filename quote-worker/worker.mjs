@@ -638,6 +638,7 @@ const OPP_EVERY_MS = 5 * 60 * 1000;
 const OPP_PREFILTER = 40; // (används inte längre; se steg 1 och 2 nedan)
 const leverageCache = new Map(); // isin -> { value, at }
 let lastOppRun = 0;
+let oppRunning = false;
 
 const OPP_PREFIXES = {
   MFS: ["MFL"], MFL: ["MFS"], BEAR: ["BULL"], BULL: ["BEAR"],
@@ -709,37 +710,12 @@ async function fillOppositeProducts() {
         continue;
       }
 
-      // Kandidater: närmast i kurs + jämnt urval över hela kursintervallet (steg 1),
-      // sedan per kvotgrupp (k = hävstång × kurs) de som har rätt kurs för samma
-      // hävstång som positionen (steg 2). Hittar rätt produkt även när Vontobel
-      // använder olika kvoter för samma underliggande.
-      const sorted = cands
-        .map((c) => ({ c, d: selfPx && px(c) ? Math.abs(Math.log(px(c) / selfPx)) : Infinity }))
-        .sort((a, b) => a.d - b.d || (b.c.turnover ?? 0) - (a.c.turnover ?? 0))
-        .map((x) => x.c);
+      // Hävstången kontrolleras för ALLA kandidater: kurserna i produktlistan är
+      // ofta tomma eller gamla och duger inte som förurval. Mest omsatta först.
+      const sorted = [...cands].sort((a, b) => (b.turnover ?? 0) - (a.turnover ?? 0)).slice(0, 400);
       const levOf = new Map();
-      const check = async (rows) => { for (const c of rows) if (!levOf.has(c.isin)) levOf.set(c.isin, await vontobelLeverage(c.name, c.isin)); };
-      const stage1 = sorted.slice(0, 20);
-      const byPrice = cands.filter((c) => px(c)).sort((a, b) => px(a) - px(b));
-      for (let i = 0; i < 10 && byPrice.length; i++) {
-        const c = byPrice[Math.round((i * (byPrice.length - 1)) / 9)];
-        if (!stage1.includes(c)) stage1.push(c);
-      }
       const selfLev = (await vontobelLeverage(pos.name, pos.isin)) ?? (pos.leverage ? Number(pos.leverage) : null);
-      await check(stage1);
-      if (selfLev) {
-        const ks = stage1.map((c) => (levOf.get(c.isin) != null && px(c) ? levOf.get(c.isin) * px(c) : null)).filter((k) => k != null).sort((a, b) => a - b);
-        const groups = [];
-        ks.forEach((k) => { if (!groups.length || k / groups[groups.length - 1] > 1.05) groups.push(k); });
-        const extra = [];
-        for (const k of groups) {
-          const target = k / selfLev;
-          sorted.filter((c) => !levOf.has(c.isin) && !extra.includes(c) && px(c))
-            .map((c) => ({ c, d: Math.abs(Math.log(px(c) / target)) }))
-            .sort((a, b) => a.d - b.d).slice(0, 8).forEach((x) => extra.push(x.c));
-        }
-        await check(extra);
-      }
+      if (selfLev) for (const c of sorted) levOf.set(c.isin, await vontobelLeverage(c.name, c.isin));
       let best = null;
       if (selfLev) {
         for (const c of sorted) {
@@ -812,10 +788,13 @@ async function loop() {
     } catch (err) {
       console.warn("Ticker update failed:", err?.message ?? err);
     }
-    try {
-      await fillOppositeProducts();
-    } catch (err) {
-      console.warn("Opposite products failed:", err?.message ?? err);
+    // Körs i bakgrunden (kan ta en minut när många produkter kontrolleras), så att
+    // kursuppdateringarna inte väntar på den.
+    if (!oppRunning) {
+      oppRunning = true;
+      fillOppositeProducts()
+        .catch((err) => console.warn("Opposite products failed:", err?.message ?? err))
+        .finally(() => { oppRunning = false; });
     }
   } catch (err) {
     console.error("Tick failed:", err);
