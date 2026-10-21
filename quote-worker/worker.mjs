@@ -635,9 +635,27 @@ async function tickerTick() {
 // (sitg_find_opposite). Körs högst var femte minut.
 // ---------------------------------------------------------------------------
 const OPP_EVERY_MS = 5 * 60 * 1000;
-const OPP_PREFILTER = 40;
+const OPP_PREFILTER = 40; // (används inte längre; se steg 1 och 2 nedan)
 const leverageCache = new Map(); // isin -> { value, at }
 let lastOppRun = 0;
+// Samma val som formuläret "Add a position" gör: portföljverktygets API kontrollerar
+// hävstången för alla kandidater (med cache och nya försök). Workern använder det i
+// första hand, så att webbplatsen, admin och workern alltid väljer samma produkt.
+const OPPOSITE_API_URL = process.env.OPPOSITE_API_URL || "https://vontobel-portfolio-phi.vercel.app/api/certificates/opposite";
+async function oppositeFromApi(isin) {
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 70000);
+    const res = await fetch(`${OPPOSITE_API_URL}?isin=${encodeURIComponent(isin)}`, { signal: ctrl.signal });
+    clearTimeout(t);
+    if (!res.ok) return null;
+    const j = await res.json();
+    return j?.name && j.method === "leverage" ? j : null;
+  } catch {
+    return null;
+  }
+}
+let oppRunning = false;
 
 const OPP_PREFIXES = {
   MFS: ["MFL"], MFL: ["MFS"], BEAR: ["BULL"], BULL: ["BEAR"],
@@ -694,6 +712,23 @@ async function fillOppositeProducts() {
         await supabase.from("portfolio_positions").update({ opposite_source: "none" }).eq("id", pos.id);
         continue;
       }
+      // 1) Samma beräkning som formuläret (portföljverktygets API).
+      const api = await oppositeFromApi(pos.isin);
+      if (api) {
+        const fmtLev = (v) => Number(v).toLocaleString("sv-SE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const line = `Produkt i motsatt riktning: ${api.name} (hävstång ${fmtLev(api.leverage)} · positionens hävstång ${fmtLev(api.ownLeverage)})`;
+        const old = pos.note || "";
+        const note = /motsatt riktning:[^\n\r]*/i.test(old)
+          ? old.replace(/(produkt i )?motsatt riktning:\s*[^\n\r]*/i, line)
+          : (old.trim() ? `${old.trimEnd()}\n\n${line}` : line);
+        await supabase.from("portfolio_positions").update({
+          opposite_isin: api.isin, opposite_name: api.name, note,
+          opposite_source: "leverage", opposite_leverage: api.leverage, own_leverage: api.ownLeverage,
+        }).eq("id", pos.id);
+        console.log(`Motsatt riktning (API): ${pos.name} (hävstång ${api.ownLeverage}) -> ${api.name} (hävstång ${api.leverage})`);
+        continue;
+      }
+      // 2) Reserv: workerns egen beräkning.
       const { data: self } = await supabase
         .from("certificates_full").select("underlying, last_price, buy_price, sell_price").eq("isin", pos.isin).maybeSingle();
       const und = self?.underlying ?? pos.underlying;
@@ -709,17 +744,16 @@ async function fillOppositeProducts() {
         continue;
       }
 
-      // Förurval på kurs, sedan riktig hävstång från Vontobel.
-      const ranked = cands
-        .map((c) => ({ c, d: selfPx && px(c) ? Math.abs(Math.log(px(c) / selfPx)) : Infinity }))
-        .sort((a, b) => a.d - b.d || (b.c.turnover ?? 0) - (a.c.turnover ?? 0))
-        .slice(0, OPP_PREFILTER)
-        .map((x) => x.c);
+      // Hävstången kontrolleras för ALLA kandidater: kurserna i produktlistan är
+      // ofta tomma eller gamla och duger inte som förurval. Mest omsatta först.
+      const sorted = [...cands].sort((a, b) => (b.turnover ?? 0) - (a.turnover ?? 0)).slice(0, 400);
+      const levOf = new Map();
       const selfLev = (await vontobelLeverage(pos.name, pos.isin)) ?? (pos.leverage ? Number(pos.leverage) : null);
+      if (selfLev) for (const c of sorted) levOf.set(c.isin, await vontobelLeverage(c.name, c.isin));
       let best = null;
       if (selfLev) {
-        for (const c of ranked) {
-          const lev = await vontobelLeverage(c.name, c.isin);
+        for (const c of sorted) {
+          const lev = levOf.get(c.isin);
           if (lev == null) continue;
           const d = Math.abs(lev - selfLev);
           if (!best || d < best.d) best = { c, d, lev };
@@ -788,10 +822,13 @@ async function loop() {
     } catch (err) {
       console.warn("Ticker update failed:", err?.message ?? err);
     }
-    try {
-      await fillOppositeProducts();
-    } catch (err) {
-      console.warn("Opposite products failed:", err?.message ?? err);
+    // Körs i bakgrunden (kan ta en minut när många produkter kontrolleras), så att
+    // kursuppdateringarna inte väntar på den.
+    if (!oppRunning) {
+      oppRunning = true;
+      fillOppositeProducts()
+        .catch((err) => console.warn("Opposite products failed:", err?.message ?? err))
+        .finally(() => { oppRunning = false; });
     }
   } catch (err) {
     console.error("Tick failed:", err);
