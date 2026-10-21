@@ -635,7 +635,7 @@ async function tickerTick() {
 // (sitg_find_opposite). Körs högst var femte minut.
 // ---------------------------------------------------------------------------
 const OPP_EVERY_MS = 5 * 60 * 1000;
-const OPP_PREFILTER = 40;
+const OPP_PREFILTER = 40; // (används inte längre; se steg 1 och 2 nedan)
 const leverageCache = new Map(); // isin -> { value, at }
 let lastOppRun = 0;
 
@@ -709,17 +709,41 @@ async function fillOppositeProducts() {
         continue;
       }
 
-      // Förurval på kurs, sedan riktig hävstång från Vontobel.
-      const ranked = cands
+      // Kandidater: närmast i kurs + jämnt urval över hela kursintervallet (steg 1),
+      // sedan per kvotgrupp (k = hävstång × kurs) de som har rätt kurs för samma
+      // hävstång som positionen (steg 2). Hittar rätt produkt även när Vontobel
+      // använder olika kvoter för samma underliggande.
+      const sorted = cands
         .map((c) => ({ c, d: selfPx && px(c) ? Math.abs(Math.log(px(c) / selfPx)) : Infinity }))
         .sort((a, b) => a.d - b.d || (b.c.turnover ?? 0) - (a.c.turnover ?? 0))
-        .slice(0, OPP_PREFILTER)
         .map((x) => x.c);
+      const levOf = new Map();
+      const check = async (rows) => { for (const c of rows) if (!levOf.has(c.isin)) levOf.set(c.isin, await vontobelLeverage(c.name, c.isin)); };
+      const stage1 = sorted.slice(0, 20);
+      const byPrice = cands.filter((c) => px(c)).sort((a, b) => px(a) - px(b));
+      for (let i = 0; i < 10 && byPrice.length; i++) {
+        const c = byPrice[Math.round((i * (byPrice.length - 1)) / 9)];
+        if (!stage1.includes(c)) stage1.push(c);
+      }
       const selfLev = (await vontobelLeverage(pos.name, pos.isin)) ?? (pos.leverage ? Number(pos.leverage) : null);
+      await check(stage1);
+      if (selfLev) {
+        const ks = stage1.map((c) => (levOf.get(c.isin) != null && px(c) ? levOf.get(c.isin) * px(c) : null)).filter((k) => k != null).sort((a, b) => a - b);
+        const groups = [];
+        ks.forEach((k) => { if (!groups.length || k / groups[groups.length - 1] > 1.05) groups.push(k); });
+        const extra = [];
+        for (const k of groups) {
+          const target = k / selfLev;
+          sorted.filter((c) => !levOf.has(c.isin) && !extra.includes(c) && px(c))
+            .map((c) => ({ c, d: Math.abs(Math.log(px(c) / target)) }))
+            .sort((a, b) => a.d - b.d).slice(0, 8).forEach((x) => extra.push(x.c));
+        }
+        await check(extra);
+      }
       let best = null;
       if (selfLev) {
-        for (const c of ranked) {
-          const lev = await vontobelLeverage(c.name, c.isin);
+        for (const c of sorted) {
+          const lev = levOf.get(c.isin);
           if (lev == null) continue;
           const d = Math.abs(lev - selfLev);
           if (!best || d < best.d) best = { c, d, lev };
