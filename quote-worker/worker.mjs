@@ -134,8 +134,21 @@ function normalizeQuote(json) {
 
 // The price this tick values a position at, or null if there is no usable one
 // (then the position keeps its last known price and is never auto-closed).
+// Unusually wide spread: when the underlying's own market has closed (e.g.
+// Stockholm 17:30 for a Nordea certificate) Vontobel keeps quoting until 22:00 but
+// widens the spread, and the bid drops although nothing really happened. Valuing
+// at that bid made the daily chart fall sharply after 17:30 and then go flat.
+// Above MAX_SPREAD_PCT the quote is treated as unusable, so the position keeps its
+// last normal price (and is never auto-closed on such a quote).
+const MAX_SPREAD_PCT = Number(process.env.MAX_SPREAD_PCT || 1.5);
+function spreadPct(q) {
+  return q && q.bid != null && q.ask != null && q.ask > 0 ? ((q.ask - q.bid) / q.ask) * 100 : null;
+}
+
 function valuationPrice(q, basis) {
   if (!q) return null;
+  const sp = spreadPct(q);
+  if (sp != null && sp > MAX_SPREAD_PCT) return null;
   if (basis === "bid") return q.bid;
   if (q.last != null) return q.last;
   if (q.bid != null && q.ask != null) return (q.bid + q.ask) / 2;
@@ -373,6 +386,7 @@ async function tick() {
           quoteByIsin.set(isin, quote);
           const price = valuationPrice(quote, PRICE_BASIS);
           if (price != null) priceByIsin.set(isin, price);
+          else if ((spreadPct(quote) ?? 0) > MAX_SPREAD_PCT) warnThrottled(`spread:${isin}`, `Wide spread ${spreadPct(quote).toFixed(2)} % for ${isin} (over ${MAX_SPREAD_PCT} %, underlying market likely closed) — keeping its last normal price.`);
           else warnThrottled(`noprice:${isin}`, `No usable ${PRICE_BASIS === "bid" ? "bid" : "price"} for ${isin} (insref ${insref}) — keeping its last known price.`);
         } catch (e) {
           console.warn(`Price fetch failed for ${isin} (insref ${insref}): ${e.message}`);
@@ -613,7 +627,7 @@ async function tickerTick() {
 // som visas på markets.vontobel.com. För varje ny position utan vald produkt:
 //   1. Kandidater: samma underliggande, samma produkttyp, motsatt riktning
 //      (MFS<->MFL, BEAR<->BULL, TLNG<->TSRT/TSHO) ur certificates_full.
-//   2. Förurval på kurs (de 15 närmast positionens certifikat), så att bara
+//   2. Förurval på kurs (de 40 närmast positionens certifikat), så att bara
 //      ett fåtal produktsidor behöver hämtas.
 //   3. Hävstång för positionens certifikat och kandidaterna hämtas från
 //      Vontobel; den med närmast hävstång väljs.
@@ -621,7 +635,7 @@ async function tickerTick() {
 // (sitg_find_opposite). Körs högst var femte minut.
 // ---------------------------------------------------------------------------
 const OPP_EVERY_MS = 5 * 60 * 1000;
-const OPP_PREFILTER = 15;
+const OPP_PREFILTER = 40;
 const leverageCache = new Map(); // isin -> { value, at }
 let lastOppRun = 0;
 
