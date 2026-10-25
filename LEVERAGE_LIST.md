@@ -14,6 +14,13 @@ När du söker efter ett kontrakt i Admin fylls kolumnen **Lev** i, och den går
 - **Marknaden stängd:** det senast kända värdet används som det är, oavsett hur gammalt, och hämtas inte
   om. Bara kontrakt som saknar något känt värde hämtas. Rubriken säger "Marknaden är stängd:
   hävstången är den senast kända." och tooltipen på värdet visar när det hämtades.
+- **Rader utan värde förklarar varför** (håll muspekaren över cellen):
+  - `…` hämtas just nu,
+  - `–` Vontobels sida visar ingen hävstång för kontraktet just nu (det kan vara utslaget eller sakna kurs),
+  - `?` det gick inte att hämta (för många anrop eller fel hos Vontobel). Tillfälliga fel sparas inte, och
+    kontraktet frågas om efter en paus, upp till tre gånger, innan det ges upp.
+- **Hävstång visas alltid som storlek.** NGM anger bear som negativ (−4); i listan står 4x, och riktningen
+  står i kolumnen Dir. Sorteringen går på storleken.
 - **Ett misslyckat försök skriver aldrig över ett känt värde.** (Det gamla hjälpanropet `getLeverages`,
   som motsatt-produkt-sökningen använder, skrev förut över med "inget" om Vontobel inte svarade. Det är
   rättat.)
@@ -28,7 +35,7 @@ körts fungerar listan ändå, men utan "senast känd" (värden sparas inte mell
 ## Skydd
 
 - Rutten hämtar bara sidor för kontrakt som finns i din egen lista, byggda av det sparade namnet.
-- Högst 40 kontrakt per anrop, högst 6 sidor åt gången, och en broms på 300 anrop per 10 minuter och adress.
+- Högst 40 kontrakt per anrop, högst 4 sidor åt gången, och en broms på 300 anrop per 10 minuter och adress.
 - Varje kontrakt hämtas högst en gång per 30 minuter (stängd marknad: bara om inget värde finns).
 
 ## Filer

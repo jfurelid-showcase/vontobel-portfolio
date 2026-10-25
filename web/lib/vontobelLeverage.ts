@@ -22,6 +22,33 @@ export function parseLeverage(html: string): number | null {
   return isFinite(v) && v > 0 ? v : null;
 }
 
+// Som fetchVontobelLeverage, men säger varför det inte gav något:
+//   ok     hävstången hittades
+//   none   sidan lästes men visar ingen hävstång (t.ex. utslaget kontrakt eller ingen kurs just nu), eller finns inte (404)
+//   error  tillfälligt fel (för många anrop, timeout, serverfel): värt att försöka igen
+export type LevFetch = { leverage: number | null; status: "ok" | "none" | "error" };
+export async function fetchVontobelLeverageDetailed(name: string, isin: string, attempts = 3): Promise<LevFetch> {
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 8000);
+      const res = await fetch(vontobelProductUrl(name, isin), {
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; SITG-portfolio/1.0)", "Accept-Language": "sv-SE,sv;q=0.9" },
+        signal: ctrl.signal,
+        cache: "no-store",
+      });
+      clearTimeout(timer);
+      if (res.status === 404) return { leverage: null, status: "none" }; // produkten finns inte (längre)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const lev = parseLeverage(await res.text());
+      return lev != null ? { leverage: lev, status: "ok" } : { leverage: null, status: "none" };
+    } catch {
+      if (attempt < attempts) await new Promise((r) => setTimeout(r, attempt * 600)); // paus innan nästa försök
+    }
+  }
+  return { leverage: null, status: "error" };
+}
+
 export async function fetchVontobelLeverage(name: string, isin: string, attempt = 1): Promise<number | null> {
   try {
     const ctrl = new AbortController();
@@ -97,7 +124,8 @@ const ISIN_RE = /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/;
 export const isIsin = (s: unknown): s is string => typeof s === "string" && ISIN_RE.test(s);
 
 export type LevSource = "ngm" | "vontobel" | null;
-export type LevInfo = { leverage: number | null; at: string | null; src: LevSource; fresh: boolean };
+export type LevStatus = "none" | "error" | null; // none: Vontobel visar ingen hävstång. error: kunde inte hämta just nu.
+export type LevInfo = { leverage: number | null; at: string | null; src: LevSource; fresh: boolean; status: LevStatus };
 export type CachedLeverage = { isin: string; leverage: number | null; fetched_at: string };
 
 // Allt som finns sparat för de här ISIN-numren, oavsett ålder. Utan cachetabellen blir svaret tomt.
@@ -124,15 +152,15 @@ export async function readCachedLeverages(isins: string[]): Promise<Map<string, 
 export type LatestOptions = {
   marketOpen: boolean;
   maxAgeMin?: number;    // öppen marknad: äldre värden hämtas om
-  concurrency?: number;
+  concurrency?: number;  // 4 sidor åt gången: färre tillfälliga fel än med fler
   budgetMs?: number;     // efter så här lång tid startas inga fler hämtningar (resten lämnas till nästa anrop)
   now?: number;
-  fetcher?: (name: string, isin: string) => Promise<number | null>;
+  fetcher?: (name: string, isin: string) => Promise<LevFetch>;
 };
 
 export async function getLatestLeverages(
   rows: { isin: string; name: string }[],
-  { marketOpen, maxAgeMin = 30, concurrency = 6, budgetMs = 20_000, now = Date.now(), fetcher = fetchVontobelLeverage }: LatestOptions,
+  { marketOpen, maxAgeMin = 30, concurrency = 4, budgetMs = 20_000, now = Date.now(), fetcher = fetchVontobelLeverageDetailed }: LatestOptions,
 ): Promise<{ results: Map<string, LevInfo>; deferred: string[] }> {
   const results = new Map<string, LevInfo>();
   const cached = await readCachedLeverages(rows.map((r) => r.isin));
@@ -144,11 +172,12 @@ export async function getLatestLeverages(
     const c = cached.get(r.isin);
     if (c && c.leverage != null) {
       const fresh = !marketOpen || ageMin(c.fetched_at) <= maxAgeMin;
-      results.set(r.isin, { leverage: c.leverage, at: c.fetched_at, src: "vontobel", fresh });
+      results.set(r.isin, { leverage: c.leverage, at: c.fetched_at, src: "vontobel", fresh, status: null });
       if (!fresh) todo.push(r); // bara när marknaden är öppen kan ett värde vara "gammalt"
     } else {
-      results.set(r.isin, { leverage: null, at: null, src: null, fresh: false });
-      if (!(c && ageMin(c.fetched_at) < nullRetryMin)) todo.push(r); // inget känt värde: försök, om inte nyss prövat
+      // Ingen känd hävstång. Finns en anteckning "provat, inget" är det vad som visas tills det är dags att pröva igen.
+      results.set(r.isin, { leverage: null, at: null, src: null, fresh: false, status: c ? "none" : null });
+      if (!(c && ageMin(c.fetched_at) < nullRetryMin)) todo.push(r);
     }
   }
 
@@ -161,14 +190,24 @@ export async function getLatestLeverages(
     while (i < todo.length) {
       const r = todo[i++];
       if (Date.now() > deadline) { deferred.push(r.isin); continue; }
-      const lev = await fetcher(r.name, r.isin);
+      const got = await fetcher(r.name, r.isin);
       const had = results.get(r.isin)!;
-      if (lev != null) {
-        results.set(r.isin, { leverage: lev, at: nowIso, src: "vontobel", fresh: true });
-        save.push({ isin: r.isin, leverage: lev, fetched_at: nowIso });
-      } else if (had.leverage == null) {
-        save.push({ isin: r.isin, leverage: null, fetched_at: nowIso }); // "provade, hittade inget"
-      } // annars: behåll det kända värdet, orört
+      if (got.status === "ok" && got.leverage != null) {
+        results.set(r.isin, { leverage: got.leverage, at: nowIso, src: "vontobel", fresh: true, status: null });
+        save.push({ isin: r.isin, leverage: got.leverage, fetched_at: nowIso });
+      } else if (got.status === "none") {
+        // Sidan visar ingen hävstång. Ett känt värde behålls; annars noteras att vi provat.
+        if (had.leverage == null) {
+          results.set(r.isin, { ...had, status: "none" });
+          save.push({ isin: r.isin, leverage: null, fetched_at: nowIso });
+        } else {
+          results.set(r.isin, { ...had, fresh: false });
+        }
+      } else {
+        // Tillfälligt fel: inget sparas (så att nästa försök inte väntar i timmar) och kontraktet lämnas tillbaka för nytt försök.
+        results.set(r.isin, { ...had, fresh: false, status: had.leverage == null ? "error" : null });
+        deferred.push(r.isin);
+      }
     }
   };
   await Promise.all(Array.from({ length: Math.min(concurrency, todo.length) }, worker));
@@ -180,14 +219,15 @@ export async function getLatestLeverages(
 }
 
 // Lägger den hävstång som redan är känd (NGM:s lista eller cachen) på sökresultatet.
+// NGM anger hävstången för bear som negativ (−4); i listan visas storleken, riktningen står i kolumnen Dir.
 export async function withKnownLeverage<T extends { isin: string; leverage: number | null }>(
   rows: T[],
-): Promise<(T & { leverage_at: string | null; leverage_src: LevSource })[]> {
+): Promise<(T & { leverage_at: string | null; leverage_src: LevSource; leverage_status: LevStatus })[]> {
   const cache = await readCachedLeverages(rows.filter((r) => r.leverage == null).map((r) => r.isin));
   return rows.map((r) => {
-    if (r.leverage != null) return { ...r, leverage_at: null, leverage_src: "ngm" as const };
+    if (r.leverage != null) return { ...r, leverage: Math.abs(Number(r.leverage)), leverage_at: null, leverage_src: "ngm" as const, leverage_status: null };
     const c = cache.get(r.isin);
-    if (c && c.leverage != null) return { ...r, leverage: c.leverage, leverage_at: c.fetched_at, leverage_src: "vontobel" as const };
-    return { ...r, leverage_at: null, leverage_src: null };
+    if (c && c.leverage != null) return { ...r, leverage: c.leverage, leverage_at: c.fetched_at, leverage_src: "vontobel" as const, leverage_status: null };
+    return { ...r, leverage_at: null, leverage_src: null, leverage_status: c ? ("none" as const) : null };
   });
 }

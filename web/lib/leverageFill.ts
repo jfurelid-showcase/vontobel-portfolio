@@ -8,8 +8,10 @@
 //   marknaden stängd  det senast kända värdet används; bara kontrakt utan värde hämtas
 
 export type LevSource = "ngm" | "vontobel" | null;
-export type LevRow = { isin: string; leverage: number | null; leverage_at?: string | null; leverage_src?: LevSource };
-export type LevAnswer = { leverage: number | null; at: string | null; src: LevSource; fresh: boolean };
+// status: "none" = Vontobel visar ingen hävstång för kontraktet, "error" = det gick inte att hämta just nu
+export type LevStatus = "none" | "error" | null;
+export type LevRow = { isin: string; leverage: number | null; leverage_at?: string | null; leverage_src?: LevSource; leverage_status?: LevStatus };
+export type LevAnswer = { leverage: number | null; at: string | null; src: LevSource; fresh: boolean; status?: LevStatus };
 export type LevReply = { results: Record<string, LevAnswer>; deferred?: string[] };
 
 export const LEV_BATCH = 40;
@@ -29,9 +31,10 @@ export function levIsStale(r: LevRow, marketOpen: boolean | null, nowMs = Date.n
   return marketOpen === true && r.leverage != null && needsLeverage(r, true, nowMs);
 }
 
-// 4.05x, 5x (högst två decimaler, punkt som i resten av tabellen)
+// 4.05x, 5x (högst två decimaler, punkt som i resten av tabellen). Alltid storleken: NGM anger hävstången
+// för bear som negativ (−4), men riktningen står redan i kolumnen Dir.
 export function fmtLev(v: number): string {
-  return `${Number(v.toFixed(2))}x`;
+  return `${Number(Math.abs(v).toFixed(2))}x`;
 }
 
 export function levTitle(r: LevRow, marketOpen: boolean | null, pending: boolean): string {
@@ -45,7 +48,10 @@ export function levTitle(r: LevRow, marketOpen: boolean | null, pending: boolean
     if (levIsStale(r, marketOpen)) return `${base} Äldre än ${LEV_FRESH_MIN} minuter, uppdateras.`;
     return base;
   }
-  return pending ? "Hämtar hävstång…" : "Hävstång saknas.";
+  if (pending) return "Hämtar hävstång…";
+  if (r.leverage_status === "error") return "Det gick inte att hämta hävstången just nu. Sök igen om en stund.";
+  if (r.leverage_status === "none") return "Vontobel visar ingen hävstång för det här kontraktet just nu (det kan vara utslaget eller sakna kurs).";
+  return "Hävstång saknas.";
 }
 
 export type FillOptions = {
@@ -56,16 +62,23 @@ export type FillOptions = {
   onResult: (answers: Record<string, LevAnswer>) => void;
   onSettled: (isins: string[], failed: boolean) => void;
   batch?: number;
-  maxDeferrals?: number; // hur många gånger ett kontrakt som inte hanns med frågas om
+  maxDeferrals?: number; // hur många gånger ett kontrakt som inte hanns med (eller fick ett tillfälligt fel) frågas om
+  retryDelayMs?: number; // paus innan de som ska frågas om tas, efter att resten är klart
 };
 
-export async function fillLeverage({ isins, post, isCurrent, onStart, onResult, onSettled, batch = LEV_BATCH, maxDeferrals = 3 }: FillOptions): Promise<void> {
+export async function fillLeverage({ isins, post, isCurrent, onStart, onResult, onSettled, batch = LEV_BATCH, maxDeferrals = 3, retryDelayMs = 2000 }: FillOptions): Promise<void> {
   if (!isins.length) return;
-  const queue = [...isins];
+  let queue = [...isins];
+  let again: string[] = []; // de som ska frågas om: tas sist, efter en paus, så att ett tillfälligt fel hinner gå över
   const deferrals = new Map<string, number>();
   let failures = 0;
   onStart?.(isins);
-  while (queue.length) {
+  while (queue.length || again.length) {
+    if (!queue.length) {
+      await new Promise((r) => setTimeout(r, retryDelayMs));
+      queue = again;
+      again = [];
+    }
     if (!isCurrent()) return;
     const chunk = queue.splice(0, batch);
     let reply: LevReply | null = null;
@@ -97,6 +110,6 @@ export async function fillLeverage({ isins, post, isCurrent, onStart, onResult, 
       if (n <= maxDeferrals) retry.push(isin); else done.push(isin);
     }
     onSettled(done, false);
-    queue.unshift(...retry);
+    again.push(...retry);
   }
 }

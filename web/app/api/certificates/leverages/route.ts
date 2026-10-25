@@ -23,12 +23,13 @@ function tooMany(req: NextRequest): boolean {
 }
 
 // POST { isins: ["DE000...", ...] }  (högst 40)
-// -> { marketOpen, results: { [isin]: { leverage, at, src, fresh } }, deferred: [isin, ...] }
+// -> { marketOpen, results: { [isin]: { leverage, at, src, fresh, status } }, deferred: [isin, ...] }
+//    status: null = värde finns, "none" = Vontobel visar ingen hävstång, "error" = kunde inte hämta just nu
 //
 // Hävstången för kontrakten i sökresultatet i admin. Den senast kända visas alltid:
 //   marknaden öppen   värden äldre än 30 minuter hämtas om från Vontobel
 //   marknaden stängd  ett känt värde används som det är, bara kontrakt utan värde hämtas
-// `deferred` är kontrakt som inte hanns med; be om dem igen.
+// `deferred` är kontrakt som inte hanns med eller som det blev tillfälligt fel för; be om dem igen.
 export async function POST(req: NextRequest) {
   if (tooMany(req)) return NextResponse.json({ error: "För många anrop. Vänta en stund." }, { status: 429 });
 
@@ -49,8 +50,8 @@ export async function POST(req: NextRequest) {
   const toFetch: { isin: string; name: string }[] = [];
   for (const isin of isins) {
     const c = byIsin.get(isin);
-    if (!c) results[isin] = { leverage: null, at: null, src: null, fresh: false };
-    else if (c.leverage != null) results[isin] = { leverage: Number(c.leverage), at: null, src: "ngm", fresh: true }; // Bull/Bear: fast hävstång i NGM:s lista
+    if (!c) results[isin] = { leverage: null, at: null, src: null, fresh: false, status: "none" };
+    else if (c.leverage != null) results[isin] = { leverage: Math.abs(Number(c.leverage)), at: null, src: "ngm", fresh: true, status: null }; // Bull/Bear: fast hävstång i NGM:s lista (bear är negativ där: vi visar storleken)
     else toFetch.push({ isin, name: c.name });
   }
 

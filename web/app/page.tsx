@@ -23,7 +23,7 @@ import { useResync } from "@/lib/useResync";
 import { useMarketOpen } from "@/lib/useMarketOpen";
 import { MARKET_CLOSED_MESSAGE, isMarketOpen } from "@/lib/marketHours";
 import { gavAfterAdd, realizedOnTrim, soldPartsByPosition } from "@/lib/tradeMath";
-import { fillLeverage, fmtLev, levIsStale, levTitle, needsLeverage, type LevAnswer, type LevSource } from "@/lib/leverageFill";
+import { fillLeverage, fmtLev, levIsStale, levTitle, needsLeverage, type LevAnswer, type LevSource, type LevStatus } from "@/lib/leverageFill";
 type Position = Parameters<typeof PositionCard>[0]["p"] & {
   stake_sek: number;
   quantity: number | null;
@@ -39,6 +39,7 @@ type Cert = {
   leverage: number | null;
   leverage_at?: string | null;   // när hävstången hämtades från Vontobel (saknas för NGM:s fasta hävstång)
   leverage_src?: LevSource;
+  leverage_status?: LevStatus;   // "none": Vontobel visar ingen hävstång. "error": kunde inte hämta just nu.
   instrument_type: string | null;
   last_price: number | null;
   buy_price: number | null;
@@ -570,6 +571,8 @@ function PortfolioAdmin() {
   const [searchedFor, setSearchedFor] = useState<string | null>(null); // the query the shown result belongs to
   const [listUpdatedAt, setListUpdatedAt] = useState<string | null>(null);
   const searchSeq = useRef(0); // only the newest search may write its result
+  // När man lämnar fliken ska en pågående hämtning av hävstång sluta (annars skickas anrop efter att listan försvunnit).
+  useEffect(() => () => { searchSeq.current++; }, []);
   // Hävstång i listan: vad som hämtas just nu, hur långt det kommit och om marknaden är öppen (enligt servern).
   const [serverMarketOpen, setServerMarketOpen] = useState<boolean | null>(null);
   const [levPending, setLevPending] = useState<Set<string>>(new Set());
@@ -686,7 +689,8 @@ function PortfolioAdmin() {
           prev.map((r) => {
             const a = answers[r.isin];
             if (!a) return r;
-            return { ...r, leverage: a.leverage ?? r.leverage, leverage_at: a.at ?? r.leverage_at ?? null, leverage_src: a.src ?? r.leverage_src ?? null };
+            const leverage = a.leverage ?? r.leverage;
+            return { ...r, leverage, leverage_at: a.at ?? r.leverage_at ?? null, leverage_src: a.src ?? r.leverage_src ?? null, leverage_status: leverage != null ? null : a.status ?? r.leverage_status ?? null };
           }),
         ),
       onSettled: (list) => {
@@ -1152,6 +1156,8 @@ function PortfolioAdmin() {
                           <span className={levIsStale(c, serverMarketOpen) ? "text-neutral-400" : ""}>{fmtLev(c.leverage)}</span>
                         ) : levPending.has(c.isin) ? (
                           <span className="text-neutral-500">…</span>
+                        ) : c.leverage_status === "error" ? (
+                          <span className="text-amber-500">?</span>
                         ) : (
                           c.instrument_type ?? "–"
                         )}
