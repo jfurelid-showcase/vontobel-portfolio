@@ -23,6 +23,7 @@ import { useResync } from "@/lib/useResync";
 import { useMarketOpen } from "@/lib/useMarketOpen";
 import { MARKET_CLOSED_MESSAGE, isMarketOpen } from "@/lib/marketHours";
 import { gavAfterAdd, realizedOnTrim, soldPartsByPosition } from "@/lib/tradeMath";
+import { fillLeverage, fmtLev, levIsStale, levTitle, needsLeverage, type LevAnswer, type LevSource } from "@/lib/leverageFill";
 type Position = Parameters<typeof PositionCard>[0]["p"] & {
   stake_sek: number;
   quantity: number | null;
@@ -36,6 +37,8 @@ type Cert = {
   underlying: string | null;
   direction: string | null;
   leverage: number | null;
+  leverage_at?: string | null;   // när hävstången hämtades från Vontobel (saknas för NGM:s fasta hävstång)
+  leverage_src?: LevSource;
   instrument_type: string | null;
   last_price: number | null;
   buy_price: number | null;
@@ -567,6 +570,12 @@ function PortfolioAdmin() {
   const [searchedFor, setSearchedFor] = useState<string | null>(null); // the query the shown result belongs to
   const [listUpdatedAt, setListUpdatedAt] = useState<string | null>(null);
   const searchSeq = useRef(0); // only the newest search may write its result
+  // Hävstång i listan: vad som hämtas just nu, hur långt det kommit och om marknaden är öppen (enligt servern).
+  const [serverMarketOpen, setServerMarketOpen] = useState<boolean | null>(null);
+  const [levPending, setLevPending] = useState<Set<string>>(new Set());
+  const [levCount, setLevCount] = useState({ done: 0, total: 0 });
+  const pendingRef = useRef(new Set<string>());
+  const levTotals = useRef({ done: 0, total: 0 });
   const [fullListCount, setFullListCount] = useState<number | null>(null);
   const [positions, setPositions] = useState<Position[]>([]);
   const [sortKey, setSortKey] = useState<keyof Cert>("last_price");
@@ -606,6 +615,7 @@ function PortfolioAdmin() {
         setHasMore(false);
         setSearchError(null);
         setSearchedFor(null);
+        resetLeverageProgress();
         return;
       }
       const params = new URLSearchParams({ q: query });
@@ -620,10 +630,14 @@ function PortfolioAdmin() {
           setTotalCount(0);
           setHasMore(false);
           setSearchedFor(null);
+          resetLeverageProgress();
           return;
         }
         setSearchError(null);
+        resetLeverageProgress();
         setResults(body.results || []);
+        setServerMarketOpen(typeof body.marketOpen === "boolean" ? body.marketOpen : null);
+        startLeverageFill(body.results || [], !!body.marketOpen, mine);
         setTotalCount(body.totalCount || 0);
         setHasMore(!!body.hasMore);
         setNextOffset(body.nextOffset || 0);
@@ -635,6 +649,53 @@ function PortfolioAdmin() {
     }, 250);
     return () => clearTimeout(t);
   }, [query, directionFilter]);
+
+  function resetLeverageProgress() {
+    pendingRef.current = new Set();
+    levTotals.current = { done: 0, total: 0 };
+    setLevPending(new Set());
+    setLevCount({ done: 0, total: 0 });
+  }
+
+  // Fyller i hävstången för kontrakten i listan i omgångar, mest handlade först (se lib/leverageFill.ts).
+  function startLeverageFill(rows: Cert[], marketOpen: boolean, mine: number) {
+    const isins = rows.filter((r) => needsLeverage(r, marketOpen)).map((r) => r.isin);
+    if (!isins.length) return;
+    const sync = () => {
+      setLevPending(new Set(pendingRef.current));
+      setLevCount({ ...levTotals.current });
+    };
+    void fillLeverage({
+      isins,
+      isCurrent: () => mine === searchSeq.current,
+      post: async (list) => {
+        const res = await fetch("/api/certificates/leverages", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ isins: list }),
+        });
+        return res.ok ? await res.json() : null;
+      },
+      onStart: (list) => {
+        list.forEach((i) => pendingRef.current.add(i));
+        levTotals.current.total += list.length;
+        sync();
+      },
+      onResult: (answers: Record<string, LevAnswer>) =>
+        setResults((prev) =>
+          prev.map((r) => {
+            const a = answers[r.isin];
+            if (!a) return r;
+            return { ...r, leverage: a.leverage ?? r.leverage, leverage_at: a.at ?? r.leverage_at ?? null, leverage_src: a.src ?? r.leverage_src ?? null };
+          }),
+        ),
+      onSettled: (list) => {
+        list.forEach((i) => pendingRef.current.delete(i));
+        levTotals.current.done += list.length;
+        sync();
+      },
+    });
+  }
 
   // A broad search can match more contracts than fit in one answer; fetch the next batch.
   async function loadMore() {
@@ -651,10 +712,13 @@ function PortfolioAdmin() {
         setSearchError(body.error ? `Sökningen misslyckades: ${body.error}` : "Sökningen misslyckades. Försök igen om en stund.");
         return;
       }
+      const have = new Set(results.map((r) => r.isin));
+      const added: Cert[] = (body.results || []).filter((r: Cert) => !have.has(r.isin));
       setResults((prev) => {
-        const have = new Set(prev.map((r) => r.isin));
-        return [...prev, ...(body.results || []).filter((r: Cert) => !have.has(r.isin))];
+        const seen = new Set(prev.map((r) => r.isin));
+        return [...prev, ...added.filter((r) => !seen.has(r.isin))];
       });
+      startLeverageFill(added, typeof body.marketOpen === "boolean" ? body.marketOpen : !!serverMarketOpen, mine);
       setHasMore(!!body.hasMore);
       setNextOffset(body.nextOffset || nextOffset);
     } catch {
@@ -1019,6 +1083,8 @@ function PortfolioAdmin() {
             Visar {results.length} av {totalCount} kontrakt
             {directionFilter ? ` (endast ${directionFilter})` : ""}
             {hasMore ? ` — mest handlade först. Skriv fler ord (till exempel serienumret, VT927) eller klicka Visa fler längst ner.` : ""}
+            {serverMarketOpen === false ? " Marknaden är stängd: hävstången är den senast kända." : ""}
+            {levPending.size > 0 ? ` Hämtar hävstång… (${levCount.done}/${levCount.total})` : ""}
           </div>
           <div className="max-h-[32rem] overflow-y-auto rounded-lg border border-neutral-800">
             <table className="w-full text-left text-sm">
@@ -1038,9 +1104,10 @@ function PortfolioAdmin() {
                       ["daily_change_pct", "Daily %"],
                     ] as [keyof Cert, string][]
                   ).map(([key, label]) => (
-                    <th key={key} className="px-3 py-2">
+                    <th key={key} className="px-3 py-2" aria-sort={sortKey === key ? (sortDir === "asc" ? "ascending" : "descending") : undefined}>
                       <button
                         onClick={() => toggleSort(key)}
+                        title={key === "leverage" ? "Sortera på hävstång: ett klick ger högst först, ett till lägst först" : undefined}
                         className="flex items-center gap-1 hover:text-neutral-200"
                       >
                         {label}
@@ -1080,8 +1147,14 @@ function PortfolioAdmin() {
                       <td className={`px-3 py-2 font-medium ${isLong ? "text-emerald-400" : isShort ? "text-red-400" : ""}`}>
                         {c.direction ?? "–"}
                       </td>
-                      <td className="px-3 py-2">
-                        {c.leverage ? `${c.leverage}x` : c.instrument_type ?? "–"}
+                      <td className="px-3 py-2" title={levTitle(c, serverMarketOpen, levPending.has(c.isin))}>
+                        {c.leverage != null ? (
+                          <span className={levIsStale(c, serverMarketOpen) ? "text-neutral-400" : ""}>{fmtLev(c.leverage)}</span>
+                        ) : levPending.has(c.isin) ? (
+                          <span className="text-neutral-500">…</span>
+                        ) : (
+                          c.instrument_type ?? "–"
+                        )}
                       </td>
                       <td className="px-3 py-2">{c.buy_price != null ? c.buy_price.toFixed(2) : "–"}</td>
                       <td className="px-3 py-2">{c.sell_price != null ? c.sell_price.toFixed(2) : "–"}</td>

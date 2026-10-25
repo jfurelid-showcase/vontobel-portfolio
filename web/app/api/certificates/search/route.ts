@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { cleanDirection, parseOffset, searchTokens } from "@/lib/certSearch";
 import { isMissingColumn } from "@/lib/optionalColumns";
+import { withKnownLeverage } from "@/lib/vontobelLeverage";
+import { isMarketOpen } from "@/lib/marketHours";
 
 const COLS = "isin, name, underlying, direction, leverage, last_price, buy_price, sell_price, daily_change_pct";
 const PAGE = 500;
@@ -92,5 +94,8 @@ export async function GET(req: NextRequest) {
     listUpdatedAt = run?.finished_at ?? null;
   }
 
-  return NextResponse.json({ results, totalCount: total, offset, nextOffset, hasMore: nextOffset < total, listUpdatedAt });
+  // Hävstång som redan är känd (NGM:s lista för Bull/Bear, annars den senast sparade från Vontobel) följer med
+  // direkt. Resten fyller sidan i via /api/certificates/leverages medan man tittar på listan.
+  const withLev = await withKnownLeverage(results as { isin: string; leverage: number | null }[]);
+  return NextResponse.json({ results: withLev, totalCount: total, offset, nextOffset, hasMore: nextOffset < total, listUpdatedAt, marketOpen: isMarketOpen() });
 }
