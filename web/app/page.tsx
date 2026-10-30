@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
@@ -557,6 +557,11 @@ function NavStat({
 // Admin tab
 // ---------------------------------------------------------------------------
 
+// The contract search first lists only the most traded contracts, so the list and their
+// leverage load in a moment; the rest comes when "Visa hela listan" is clicked, 500 at a time.
+const TOP_COUNT = 20;
+const FULL_PAGE = 500;
+
 function PortfolioAdmin() {
   const { id: portfolioId, authFetch } = usePortfolio();
   const [query, setQuery] = useState("");
@@ -567,6 +572,8 @@ function PortfolioAdmin() {
   const [hasMore, setHasMore] = useState(false);
   const [nextOffset, setNextOffset] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
+  // A new search shows only the most traded contracts; "Visa hela listan" fetches the rest.
+  const [showingTop, setShowingTop] = useState(true);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [searchedFor, setSearchedFor] = useState<string | null>(null); // the query the shown result belongs to
   const [listUpdatedAt, setListUpdatedAt] = useState<string | null>(null);
@@ -621,7 +628,7 @@ function PortfolioAdmin() {
         resetLeverageProgress();
         return;
       }
-      const params = new URLSearchParams({ q: query });
+      const params = new URLSearchParams({ q: query, limit: String(TOP_COUNT) });
       if (directionFilter) params.set("direction", directionFilter);
       try {
         const res = await fetch(`/api/certificates/search?${params}`);
@@ -644,6 +651,7 @@ function PortfolioAdmin() {
         setTotalCount(body.totalCount || 0);
         setHasMore(!!body.hasMore);
         setNextOffset(body.nextOffset || 0);
+        setShowingTop(true);
         if (body.listUpdatedAt) setListUpdatedAt(body.listUpdatedAt);
         setSearchedFor(query.trim());
       } catch {
@@ -707,7 +715,7 @@ function PortfolioAdmin() {
     const mine = searchSeq.current;
     setLoadingMore(true);
     try {
-      const params = new URLSearchParams({ q: query, offset: String(nextOffset) });
+      const params = new URLSearchParams({ q: query, offset: String(nextOffset), limit: String(FULL_PAGE) });
       if (directionFilter) params.set("direction", directionFilter);
       const res = await fetch(`/api/certificates/search?${params}`);
       const body = await res.json().catch(() => ({}));
@@ -725,6 +733,7 @@ function PortfolioAdmin() {
       startLeverageFill(added, typeof body.marketOpen === "boolean" ? body.marketOpen : !!serverMarketOpen, mine);
       setHasMore(!!body.hasMore);
       setNextOffset(body.nextOffset || nextOffset);
+      setShowingTop(false);
     } catch {
       setSearchError("Kunde inte nå servern. Kontrollera uppkopplingen och försök igen.");
     } finally {
@@ -1086,7 +1095,11 @@ function PortfolioAdmin() {
           <div className="mb-3 text-sm text-neutral-400">
             Visar {results.length} av {totalCount} kontrakt
             {directionFilter ? ` (endast ${directionFilter})` : ""}
-            {hasMore ? ` — mest handlade först. Skriv fler ord (till exempel serienumret, VT927) eller klicka Visa fler längst ner.` : ""}
+            {hasMore
+              ? showingTop
+                ? ` — de mest handlade. Klicka Visa hela listan längst ner för resten, eller skriv fler ord (till exempel serienumret, VT927).`
+                : ` — mest handlade först. Skriv fler ord (till exempel serienumret, VT927) eller klicka Visa fler längst ner.`
+              : ""}
             {serverMarketOpen === false ? " Marknaden är stängd: hävstången är den senast kända." : ""}
             {levPending.size > 0 ? ` Hämtar hävstång… (${levCount.done}/${levCount.total})` : ""}
           </div>
@@ -1191,7 +1204,11 @@ function PortfolioAdmin() {
                 disabled={loadingMore}
                 className="rounded-lg border border-neutral-700 px-3 py-1.5 text-sm font-medium text-neutral-200 hover:bg-neutral-800 disabled:opacity-50"
               >
-                {loadingMore ? "Hämtar…" : `Visa fler (${Math.min(500, totalCount - results.length)} till)`}
+                {loadingMore
+                  ? "Hämtar…"
+                  : showingTop
+                    ? `Visa hela listan (${totalCount} kontrakt)`
+                    : `Visa fler (${Math.min(FULL_PAGE, totalCount - results.length)} till)`}
               </button>
             )}
           </div>

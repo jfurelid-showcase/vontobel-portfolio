@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { cleanDirection, parseOffset, searchTokens } from "@/lib/certSearch";
 import { isMissingColumn } from "@/lib/optionalColumns";
@@ -7,8 +7,14 @@ import { isMarketOpen } from "@/lib/marketHours";
 
 const COLS = "isin, name, underlying, direction, leverage, last_price, buy_price, sell_price, daily_change_pct";
 const PAGE = 500;
+// The admin form first asks for the 20 most traded (`limit=20`), so the list and its
+// leverage load quickly; "Visa hela listan" then pages through the rest 500 at a time.
+const parseLimit = (v: string | null) => {
+  const n = Number.parseInt(v ?? "", 10);
+  return Number.isFinite(n) && n > 0 ? Math.min(n, PAGE) : PAGE;
+};
 
-// GET /api/certificates/search?q=<words>[&direction=Long|Short][&offset=<n>]
+// GET /api/certificates/search?q=<words>[&direction=Long|Short][&offset=<n>][&limit=<n>]
 //
 // Every word you type must appear somewhere in the contract's name, ISIN or
 // underlying, in any order, so "AMZN MFL" finds "MFL AMZN VT927" and extra
@@ -26,6 +32,7 @@ export async function GET(req: NextRequest) {
   const tokens = searchTokens(sp.get("q") ?? "");
   const direction = cleanDirection(sp.get("direction"));
   const offset = parseOffset(sp.get("offset"));
+  const limit = parseLimit(sp.get("limit"));
 
   if (tokens.join("").length < 2) {
     return NextResponse.json({ results: [], totalCount: 0, offset: 0, nextOffset: 0, hasMore: false });
@@ -48,7 +55,7 @@ export async function GET(req: NextRequest) {
         // have no turnover at all, and an unstable order would repeat or skip rows).
         .order("turnover", { ascending: false, nullsFirst: false })
         .order("isin", { ascending: true })
-        .range(offset, offset + PAGE - 1)
+        .range(offset, offset + limit - 1)
     );
   };
   let withStatus = true;
