@@ -2,15 +2,20 @@ name: Scrape full Vontobel list (daily 17:30 CET)
 
 on:
   schedule:
-    # GitHub Actions cron is UTC only, and has no DST awareness.
-    # 17:30 CET (winter, UTC+1)  = 16:30 UTC
-    # 17:30 CEST (summer, UTC+2) = 15:30 UTC
-    # Both are scheduled below; each run checks the current CET/CEST wall
-    # clock and exits immediately if it isn't actually 17:30 there, so only
-    # one of the two actually scrapes on any given day.
-    - cron: "30 16 * 1,2,3,11,12 *"   # CET months (roughly)
-    - cron: "30 15 * 4,5,6,7,8,9,10 *" # CEST months (roughly)
-  workflow_dispatch: {} # lets you trigger it manually from the Actions tab
+    # GitHub cron is UTC and often runs late (sometimes hours).
+    # Both lines fire every day:
+    #   15:30 UTC = 17:30 summer time (CEST) / 16:30 winter time (CET)
+    #   16:30 UTC = 18:30 summer time        / 17:30 winter time
+    # The gate below scrapes on the first run that lands at or after
+    # 17:00 Stockholm time, and skips if today's scrape already succeeded.
+    - cron: "30 15 * * *"
+    - cron: "30 16 * * *"
+  workflow_dispatch: {} # manual runs always scrape
+
+# Never run two scrapes at the same time; a second run waits for the first.
+concurrency:
+  group: full-list
+  cancel-in-progress: false
 
 jobs:
   scrape:
@@ -19,26 +24,48 @@ jobs:
       run:
         working-directory: scraper-full-list
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - name: Check it's actually ~17:30 Europe/Stockholm
+      - name: Decide whether to scrape
         id: check
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           if [ "${{ github.event_name }}" != "schedule" ]; then
-            echo "Manually triggered (workflow_dispatch) — skipping the time gate, running now."
+            echo "Manual run: scraping now."
             echo "run=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+
           hour=$(TZ=Europe/Stockholm date +%H)
-          echo "Local Stockholm time hour: $hour"
-          if [ "$hour" == "17" ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          else
+          echo "Stockholm hour: $hour"
+          if [ "$hour" -lt 17 ]; then
+            echo "Before 17:00 in Stockholm: skipping (the later cron line covers today)."
             echo "run=false" >> "$GITHUB_OUTPUT"
-            echo "Not 17:xx in Stockholm — skipping (the other cron line covers this half of the year)."
+            exit 0
           fi
 
-      - uses: actions/setup-node@v4
+          since=$(TZ=Europe/Stockholm date -d 'today 17:00' --iso-8601=seconds)
+          echo "Looking for a successful scrape since $since"
+          found=$(curl -sfG "$SUPABASE_URL/rest/v1/scrape_runs" \
+            -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            --data-urlencode "select=id" \
+            --data-urlencode "job=eq.full_list" \
+            --data-urlencode "ok=eq.true" \
+            --data-urlencode "started_at=gte.$since" \
+            --data-urlencode "limit=1" || echo "[]")
+
+          if [ "$found" != "[]" ]; then
+            echo "Today's scrape already done: skipping."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "No scrape yet today: scraping."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v5
         if: steps.check.outputs.run == 'true'
         with:
           node-version: 24
