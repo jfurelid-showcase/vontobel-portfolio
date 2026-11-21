@@ -22,6 +22,7 @@
 
 import { chromium } from "playwright";
 import { createClient } from "@supabase/supabase-js";
+import { persistList, summarizeStatusFields } from "./persist.mjs";
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -33,7 +34,10 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 const SITE_URL = "https://www.ngm.se/market/etp?issuers=vontobel&page=1";
 const API_URL = "https://ngm-api-prod.vmate.se/instrument/list";
-const PAGE_SIZE = 500; // ask for a big page; if the server clamps it, we adapt using what it actually returns
+// Ask for a big page first. If NGM rejects the size (HTTP 400 — it did from 2026-11-05),
+// step down through smaller sizes until one is accepted, and keep that size for the run.
+const PAGE_SIZES = [500, 200, 100, 50, 25];
+let pageSize = PAGE_SIZES[0];
 const MAX_LOOPS = 2000; // hard safety cap so a bug (e.g. totalNumber never reached) can't loop forever
 
 function mapItemToCertificate(item) {
@@ -50,7 +54,9 @@ function mapItemToCertificate(item) {
     sell_price: item.bidprice ?? null,
     last_price: item.lastprice ?? null,
     direction: item.funddirection ?? null,
-    leverage: item.fundleverage ?? null,
+    // NGM stores leverage with two implicit decimals (300 = 3.00x) —
+    // confirmed via "BULL NVIDIA X3" showing raw value 300 for actual 3x.
+    leverage: item.fundleverage != null ? item.fundleverage / 100 : null,
     daily_change_pct: item.dailyPerformance ?? null,
     turnover: item.turnover ?? null,
     ngm_updated_at: null, // API doesn't expose a per-instrument "last updated" timestamp
@@ -77,12 +83,12 @@ async function main() {
     const apiContext = page.context().request;
     let totalNumber = null;
 
-    for (let p = 0; p < MAX_LOOPS; p++) {
-      const response = await apiContext.post(API_URL, {
+    const requestPage = (p, size) =>
+      apiContext.post(API_URL, {
         headers: { "Content-Type": "application/json" },
         data: {
           page: p,
-          size: PAGE_SIZE,
+          size,
           market: "etp",
           instrumentType: "ALL",
           issuers: "VON",
@@ -91,15 +97,35 @@ async function main() {
         },
       });
 
+    for (let p = 0; p < MAX_LOOPS; p++) {
+      let response = await requestPage(p, pageSize);
+
+      // Page 0 rejected: try smaller page sizes before giving up.
+      if (!response.ok() && p === 0) {
+        const firstBody = (await response.text().catch(() => "")).slice(0, 300);
+        console.error(`HTTP ${response.status()} with size=${pageSize}. Body: ${firstBody}`);
+        for (const size of PAGE_SIZES.slice(PAGE_SIZES.indexOf(pageSize) + 1)) {
+          const retry = await requestPage(0, size);
+          if (retry.ok()) {
+            console.log(`size=${size} accepted — using it for the rest of the run.`);
+            pageSize = size;
+            response = retry;
+            break;
+          }
+          console.error(`HTTP ${retry.status()} with size=${size}`);
+        }
+      }
+
       if (!response.ok()) {
-        throw new Error(`API call failed on page ${p}: HTTP ${response.status()}`);
+        const body = (await response.text().catch(() => "")).slice(0, 300);
+        throw new Error(`API call failed on page ${p}: HTTP ${response.status()} ${body}`);
       }
 
       const json = await response.json();
       const items = json.data || [];
       if (totalNumber === null) {
         totalNumber = json.totalNumber ?? null;
-        console.log(`API reports totalNumber=${totalNumber}, actual page size returned=${items.length}`);
+        console.log(`API reports totalNumber=${totalNumber}, actual page size returned=${items.length}, requested=${pageSize}`);
       }
 
       console.log(`page ${p}: ${items.length} items (running total ${all.length + items.length}${totalNumber ? `/${totalNumber}` : ""})`);
@@ -121,13 +147,12 @@ async function main() {
       throw new Error("0 Vontobel rows fetched from the API — check inspect-api.mjs output, the request shape may have changed.");
     }
 
-    const BATCH = 500;
-    for (let i = 0; i < deduped.length; i += BATCH) {
-      const { error } = await supabase
-        .from("certificates_full")
-        .upsert(deduped.slice(i, i + BATCH), { onConflict: "isin" });
-      if (error) throw error;
-    }
+    console.log("Fields in NGM's list that describe a contract's state:");
+    for (const line of summarizeStatusFields(all)) console.log(line);
+
+    // Save the list, then hide contracts that have dropped out of it (knocked out, matured, withdrawn).
+    // DELIST=false switches the hiding off.
+    const saved = await persistList(supabase, deduped, { delist: process.env.DELIST !== "false" });
 
     await supabase
       .from("scrape_runs")
@@ -135,6 +160,8 @@ async function main() {
         finished_at: new Date().toISOString(),
         rows_written: deduped.length,
         ok: true,
+        // A note, not an error: what happened to contracts that left the list.
+        error: saved.delistingSkipped ? `Delisting skipped: ${saved.delistingSkipped}` : saved.statusColumns ? `Delisted ${saved.delisted.length}` : null,
       })
       .eq("id", run.id);
 
