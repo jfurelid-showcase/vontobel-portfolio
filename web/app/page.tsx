@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
@@ -1085,6 +1085,11 @@ function PortfolioAdmin() {
             <li>
               Nya kontrakt läggs till i listan en gång per dygn, kring kl 17:30 svensk tid. Ett kontrakt som börjat handlas i dag syns först i morgon.
               {listUpdatedAt ? ` Listan uppdaterades senast ${new Date(listUpdatedAt).toLocaleString("sv-SE")}.` : ""}
+              {listUpdatedAt && Date.now() - new Date(listUpdatedAt).getTime() > 2 * 86400000 ? (
+              <span className="ml-1 font-medium text-amber-400">
+                Varning: listan är {Math.floor((Date.now() - new Date(listUpdatedAt).getTime()) / 86400000)} dygn gammal – nya kontrakt saknas tills nästa lyckade uppdatering.
+              </span>
+            ) : null}
             </li>
           </ul>
         </section>
@@ -1197,6 +1202,11 @@ function PortfolioAdmin() {
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-neutral-500">
             <span>
               {listUpdatedAt ? `Kontraktslistan uppdaterades senast ${new Date(listUpdatedAt).toLocaleString("sv-SE")}.` : ""}
+              {listUpdatedAt && Date.now() - new Date(listUpdatedAt).getTime() > 2 * 86400000 ? (
+              <span className="ml-1 font-medium text-amber-400">
+                Varning: listan är {Math.floor((Date.now() - new Date(listUpdatedAt).getTime()) / 86400000)} dygn gammal – nya kontrakt saknas tills nästa lyckade uppdatering.
+              </span>
+            ) : null}
             </span>
             {hasMore && (
               <button
