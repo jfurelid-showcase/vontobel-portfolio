@@ -34,7 +34,10 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 const SITE_URL = "https://www.ngm.se/market/etp?issuers=vontobel&page=1";
 const API_URL = "https://ngm-api-prod.vmate.se/instrument/list";
-const PAGE_SIZE = 500; // ask for a big page; if the server clamps it, we adapt using what it actually returns
+// Ask for a big page first. If NGM rejects the size (HTTP 400 — it did from 2026-11-05),
+// step down through smaller sizes until one is accepted, and keep that size for the run.
+const PAGE_SIZES = [500, 200, 100, 50, 25];
+let pageSize = PAGE_SIZES[0];
 const MAX_LOOPS = 2000; // hard safety cap so a bug (e.g. totalNumber never reached) can't loop forever
 
 function mapItemToCertificate(item) {
@@ -80,12 +83,12 @@ async function main() {
     const apiContext = page.context().request;
     let totalNumber = null;
 
-    for (let p = 0; p < MAX_LOOPS; p++) {
-      const response = await apiContext.post(API_URL, {
+    const requestPage = (p, size) =>
+      apiContext.post(API_URL, {
         headers: { "Content-Type": "application/json" },
         data: {
           page: p,
-          size: PAGE_SIZE,
+          size,
           market: "etp",
           instrumentType: "ALL",
           issuers: "VON",
@@ -94,15 +97,35 @@ async function main() {
         },
       });
 
+    for (let p = 0; p < MAX_LOOPS; p++) {
+      let response = await requestPage(p, pageSize);
+
+      // Page 0 rejected: try smaller page sizes before giving up.
+      if (!response.ok() && p === 0) {
+        const firstBody = (await response.text().catch(() => "")).slice(0, 300);
+        console.error(`HTTP ${response.status()} with size=${pageSize}. Body: ${firstBody}`);
+        for (const size of PAGE_SIZES.slice(PAGE_SIZES.indexOf(pageSize) + 1)) {
+          const retry = await requestPage(0, size);
+          if (retry.ok()) {
+            console.log(`size=${size} accepted — using it for the rest of the run.`);
+            pageSize = size;
+            response = retry;
+            break;
+          }
+          console.error(`HTTP ${retry.status()} with size=${size}`);
+        }
+      }
+
       if (!response.ok()) {
-        throw new Error(`API call failed on page ${p}: HTTP ${response.status()}`);
+        const body = (await response.text().catch(() => "")).slice(0, 300);
+        throw new Error(`API call failed on page ${p}: HTTP ${response.status()} ${body}`);
       }
 
       const json = await response.json();
       const items = json.data || [];
       if (totalNumber === null) {
         totalNumber = json.totalNumber ?? null;
-        console.log(`API reports totalNumber=${totalNumber}, actual page size returned=${items.length}`);
+        console.log(`API reports totalNumber=${totalNumber}, actual page size returned=${items.length}, requested=${pageSize}`);
       }
 
       console.log(`page ${p}: ${items.length} items (running total ${all.length + items.length}${totalNumber ? `/${totalNumber}` : ""})`);
