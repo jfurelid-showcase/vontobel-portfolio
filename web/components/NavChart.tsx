@@ -126,7 +126,7 @@ async function fetchSeries(key: string, portfolioId: number): Promise<NavPoint[]
 // calls in page.tsx keep compiling — the chart now loads its own data.
 export default function NavChart({ history: _history, portfolioName }: { history?: NavPoint[]; portfolioName?: string | null }) {
   const { id: portfolioId } = usePortfolio();
-  const [range, setRange] = useState<RangeLabel>("1D");
+  const [range, setRange] = useState<RangeLabel>("År");
   const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
