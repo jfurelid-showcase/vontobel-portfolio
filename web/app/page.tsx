@@ -287,6 +287,7 @@ function Dashboard() {
   const inceptionPct = useMemo(() => pctFrom(refNavs.inception), [refNavs.inception, latestNav]);
 
   const [view, setView] = useState<"cards" | "list">("cards");
+  const [showAllClosed, setShowAllClosed] = useState(false);
 
   const open = positions.filter((p) => p.status === "open");
   const totalOpenPl = open.reduce((sum, p) => {
@@ -298,7 +299,7 @@ function Dashboard() {
     .filter((p) => p.status === "closed")
     .sort((a, b) => new Date(b.exit_time ?? b.entry_time).getTime() - new Date(a.exit_time ?? a.entry_time).getTime());
   const RECENT_CLOSED_LIMIT = 10;
-  const closed = closedAll.slice(0, RECENT_CLOSED_LIMIT);
+  const closed = showAllClosed ? closedAll : closedAll.slice(0, RECENT_CLOSED_LIMIT);
   // What has already been sold off each open position (Sälj del), shown on its card.
   const soldBy = useMemo(() => soldPartsByPosition(positions as any), [positions]);
 
@@ -426,6 +427,17 @@ function Dashboard() {
             </div>
           )}
           {view === "list" && <PositionListView items={closed} />}
+          {closedAll.length > RECENT_CLOSED_LIMIT && (
+            <div className="mt-4 text-center">
+              <button
+                type="button"
+                onClick={() => setShowAllClosed((v) => !v)}
+                className="rounded-md border border-neutral-700 px-4 py-2 text-sm text-neutral-300 hover:border-neutral-500 hover:text-white"
+              >
+                {showAllClosed ? "Visa färre" : `Visa alla ${closedAll.length} stängda`}
+              </button>
+            </div>
+          )}
         </section>
       )}
     </>
